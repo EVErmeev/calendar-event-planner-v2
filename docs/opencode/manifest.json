@@ -4,9 +4,9 @@
   "default_branch": "master",
   "active_task": "docs/opencode/specifications/2026-08-01_001_fix-initial-audit-findings.md",
   "latest_audit": "docs/opencode/audits/2026-08-01_08fb92d_initial-functional-audit.md",
-  "latest_validation": null,
-  "current_status": "requires_fixes",
-  "checked_commit": "08fb92dfeb8b038cbce07f34eeaf82e6e98ca97c",
+  "latest_validation": "docs/opencode/validations/2026-08-01_97ddd03_initial-audit-fixes.md",
+  "current_status": "ready_for_independent_validation",
+  "checked_commit": "97ddd03...",
   "rules": {
     "dry_run_required": true,
     "real_event_creation_during_validation": false,

@@ -101,6 +101,9 @@ class StageController:
             return self.stages[idx].status.value
         return "not_started"
 
+    def set_current_stage(self, stage: int) -> None:
+        self.current_stage = max(0, min(5, stage))
+
     def prev_stage(self) -> None:
         self.current_stage = max(0, self.current_stage - 1)
 

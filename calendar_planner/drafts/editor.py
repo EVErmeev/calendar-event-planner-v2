@@ -92,8 +92,6 @@ class DraftEditor:
         draft.duration_confirmed = original.duration_confirmed
 
     def _update_field(self, draft: FinalEventDraft, field: DraftField, new_value, field_name: str) -> None:
-        if field.modified_by_user:
-            return
         field.value = new_value
         field.modified_by_user = True
         import datetime as dt

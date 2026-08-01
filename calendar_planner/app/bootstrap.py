@@ -27,10 +27,23 @@ def main() -> None:
     project_root = Path(__file__).parent.parent.parent
     sys.path.insert(0, str(project_root))
 
+    from calendar_planner.app.settings import settings
+    from calendar_planner.app.container import AppContainer
+
+    container = AppContainer(settings)
+
+    if settings.MCP_ENABLED:
+        container.init_mcp()
+
+    if "--cli" in sys.argv:
+        from calendar_planner.cli import main as cli_main
+        cli_main()
+        return
+
     from calendar_planner.ui.main_window import MainWindow
 
     root = tk.Tk()
-    app = MainWindow(root)
+    app = MainWindow(root, container=container)
     root.mainloop()
 
 

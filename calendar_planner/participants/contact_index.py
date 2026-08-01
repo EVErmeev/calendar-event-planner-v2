@@ -39,14 +39,38 @@ class ContactIndex:
             ))
 
         for sheet_name, sheet_data in source.sheets.items():
+            schema = self._detect_contact_schema(sheet_data)
+            has_contact_headers = schema["full_name"] >= 0 or schema["email"] >= 0
+
             for row_idx, row in enumerate(sheet_data):
+                if has_contact_headers and row_idx == 0:
+                    continue
+
                 row_text = " ".join(row)
                 for email in EMAIL_RE.findall(row_text):
+                    full_name = ""
+                    if schema["full_name"] >= 0 and schema["full_name"] < len(row):
+                        candidate = row[schema["full_name"]]
+                        if candidate and "@" not in candidate:
+                            full_name = candidate
+
+                    if not full_name:
+                        full_name = row[0] if row and row[0] and "@" not in row[0] else ""
+
+                    phone = ""
+                    if schema["phone"] >= 0 and schema["phone"] < len(row):
+                        phone = row[schema["phone"]] if row[schema["phone"]] else ""
+
+                    organization = ""
+                    if schema["organization"] >= 0 and schema["organization"] < len(row):
+                        organization = row[schema["organization"]] if row[schema["organization"]] else ""
+
                     self.contacts.append(ContactRecord(
-                        full_name=row[0] if row and row[0] and "@" not in row[0] else "",
+                        full_name=full_name,
                         surname=self._extract_surname(row),
                         email=email,
-                        organization="",
+                        phone=phone,
+                        organization=organization,
                         source_location=f"{sheet_name}:R{row_idx + 1}",
                     ))
 
@@ -67,6 +91,31 @@ class ContactIndex:
                 if len(parts) >= 1:
                     return parts[0]
         return ""
+
+    @staticmethod
+    def _detect_contact_schema(sheet_data: list[list[str]]) -> dict[str, int]:
+        mapping = {"full_name": -1, "email": -1, "phone": -1, "organization": -1}
+
+        name_keywords = ["фио", "ф.и.о.", "fio", "full name", "имя", "name"]
+        email_keywords = ["email", "e-mail", "почта", "mail"]
+        phone_keywords = ["телефон", "phone", "tel", "мобильный"]
+        org_keywords = ["организация", "organization", "компания", "company", "орг"]
+
+        for row in sheet_data[:5]:
+            for col_idx, cell in enumerate(row):
+                if not cell:
+                    continue
+                cell_lower = str(cell).lower().strip()
+                if mapping["full_name"] == -1 and any(kw in cell_lower for kw in name_keywords):
+                    mapping["full_name"] = col_idx
+                if mapping["email"] == -1 and any(kw in cell_lower for kw in email_keywords):
+                    mapping["email"] = col_idx
+                if mapping["phone"] == -1 and any(kw in cell_lower for kw in phone_keywords):
+                    mapping["phone"] = col_idx
+                if mapping["organization"] == -1 and any(kw in cell_lower for kw in org_keywords):
+                    mapping["organization"] = col_idx
+
+        return mapping
 
     def find_by_name(self, name: str, organization: str | None = None) -> list[ContactRecord]:
         results = []

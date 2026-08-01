@@ -103,7 +103,9 @@ class StructuredExtractor:
             if col < len(row) and row[col]:
                 sr.links.append(row[col])
 
-        if detector.header_timezone:
+        if detector.agreed_time_col is not None and detector.agreed_time_col in detector.column_timezones:
+            sr.timezone = detector.column_timezones[detector.agreed_time_col]
+        elif detector.header_timezone:
             sr.timezone = detector.header_timezone
 
         for col_idx, cell in enumerate(row):

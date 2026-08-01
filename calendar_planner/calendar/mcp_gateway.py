@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from calendar_planner.domain.models import CalendarEvent
 from calendar_planner.calendar.datetime_normalizer import parse_iso_datetime
+
+_logger = logging.getLogger(__name__)
 
 
 class MCPCalendarGateway:
@@ -53,12 +56,13 @@ class MCPCalendarGateway:
         if not self._mcp_call:
             return []
 
-        raw_events = self._mcp_call(self._find_tool, {
+        raw_result = self._mcp_call(self._find_tool, {
             "start": start_date,
             "end": end_date,
         })
 
-        self._last_response_raw = raw_events if isinstance(raw_events, list) else []
+        raw_events = self._normalize_response(raw_result)
+        self._last_response_raw = raw_events
 
         events = []
         for raw in self._last_response_raw:
@@ -67,6 +71,40 @@ class MCPCalendarGateway:
                 events.append(event)
 
         return events
+
+    def _normalize_response(self, raw_result) -> list[dict]:
+        if isinstance(raw_result, list):
+            return [r for r in raw_result if isinstance(r, dict)]
+
+        if isinstance(raw_result, dict):
+            if "events" in raw_result:
+                events = raw_result["events"]
+                if isinstance(events, list):
+                    return [r for r in events if isinstance(r, dict)]
+                _logger.warning("MCP response 'events' key is not a list: %s", type(events))
+            if "result" in raw_result:
+                result = raw_result["result"]
+                if isinstance(result, list):
+                    return [r for r in result if isinstance(r, dict)]
+                if isinstance(result, dict):
+                    for key in ("events", "items", "data"):
+                        if key in result and isinstance(result[key], list):
+                            return [r for r in result[key] if isinstance(r, dict)]
+                _logger.warning("MCP response 'result' key has unexpected structure: %s", type(result))
+            if any(k in raw_result for k in ("nextPageToken", "hasMore", "pagination")):
+                _logger.warning("MCP response contains pagination placeholders — possible incomplete result")
+            return []
+
+        if isinstance(raw_result, str):
+            try:
+                parsed = json.loads(raw_result)
+                return self._normalize_response(parsed)
+            except json.JSONDecodeError:
+                _logger.warning("MCP response is a non-JSON string: %s", raw_result[:200])
+                return []
+
+        _logger.warning("Unexpected MCP response type: %s", type(raw_result))
+        return []
 
     def create_event(self, payload: dict, dry_run: bool = True) -> dict:
         if not self._mcp_call:

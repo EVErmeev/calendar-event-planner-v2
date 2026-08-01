@@ -46,7 +46,7 @@ class NameMatcher:
 
         if len(results) >= 2:
             best = max(results, key=lambda e: self._score_match(name, e))
-            emp = results[0] if isinstance(results[0], dict) else best
+            emp = best
             return ResolvedParticipant(
                 full_name=emp.get("full_name", ""),
                 email=emp.get("email"),

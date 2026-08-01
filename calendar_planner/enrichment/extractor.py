@@ -99,11 +99,21 @@ class EnrichmentExtractor:
 
                 if subject_lower and subject_lower.split(":")[0].strip() in row_text:
                     counter += 1
+                    row_value = " ".join(row)
+                    if "http://" in row_value or "https://" in row_value:
+                        item_type = DescriptionItemType.LINK
+                        item_title = f"Ссылка с листа '{sheet_name}'"
+                    elif any(keyword in row_text for keyword in ["заметка", "note", "коммент", "примечание", "comment"]):
+                        item_type = DescriptionItemType.NOTE
+                        item_title = f"Заметка с листа '{sheet_name}'"
+                    else:
+                        item_type = DescriptionItemType.DOCUMENT
+                        item_title = f"Документ с листа '{sheet_name}'"
                     items.append(DescriptionItem(
                         item_id=f"ENR-{candidate.candidate_id}-{counter:03d}",
-                        item_type=DescriptionItemType.LINK,
-                        title=f"Данные с листа '{sheet_name}'",
-                        value=" ".join(row),
+                        item_type=item_type,
+                        title=item_title,
+                        value=row_value,
                         source_location=f"{sheet_name}:R{row_idx + 1}",
                         reasoning=f"Связано с темой встречи через '{candidate.subject[:50]}'",
                         confidence=0.5,

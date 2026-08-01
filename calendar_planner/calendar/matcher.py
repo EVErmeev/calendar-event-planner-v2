@@ -113,14 +113,16 @@ class CalendarMatcher:
                     subject_similarity=sub_sim,
                 )
 
+            weighted_score = self.compute_weighted_score(candidate, event)
+
             if time_diff <= self.tolerance_minutes and sub_sim < self.subject_threshold:
-                match = (event, sub_sim, MatchDecision.POSSIBLE_DUPLICATE, int(time_diff), sub_sim)
-                if best_match is None or sub_sim > best_match[1]:
+                match = (event, weighted_score, MatchDecision.POSSIBLE_DUPLICATE, int(time_diff), sub_sim)
+                if best_match is None or weighted_score > best_match[1]:
                     best_match = match
 
             if time_diff > self.tolerance_minutes and time_diff <= 240 and sub_sim >= self.subject_threshold:
-                match = (event, sub_sim, MatchDecision.POSSIBLE_RESCHEDULE, int(time_diff), sub_sim)
-                if best_match is None or sub_sim > best_match[1]:
+                match = (event, weighted_score, MatchDecision.POSSIBLE_RESCHEDULE, int(time_diff), sub_sim)
+                if best_match is None or weighted_score > best_match[1]:
                     best_match = match
 
         if best_match:
@@ -162,10 +164,17 @@ class CalendarMatcher:
 
         if candidate.start_date and event.start:
             total_weight += weights["date"]
-            score += weights["date"] * 1.0
+            candidate_date = str(candidate.start_date)
+            event_date = event.start.display_datetime.strftime("%Y-%m-%d")
+            if candidate_date == event_date:
+                score += weights["date"] * 1.0
 
         if candidate.start_time and event.start:
             total_weight += weights["time"]
+            candidate_time = candidate.start_time
+            event_time = event.start.display_datetime.strftime("%H:%M")
+            if candidate_time == event_time:
+                score += weights["time"] * 1.0
 
         sub_sim = subject_similarity(candidate.subject, event.subject)
         total_weight += weights["subject"]

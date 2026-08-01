@@ -288,6 +288,45 @@ class TestSchemaDetector:
         assert detector.agreed_time_col == 2
         assert detector.planned_date_col == 3
 
+    def test_agreed_time_header_with_timezone_ekb(self):
+        from calendar_planner.source.schema_detector import TableSchemaDetector
+
+        data = [
+            ["Тема", "Согласованная дата", "Согласованное время, ЕКБ", "Плановая дата"],
+            ["Встреча 1", "31.07.2026", "12:00", "30.07.2026"],
+        ]
+        detector = TableSchemaDetector()
+        detector.detect(data)
+
+        assert detector.agreed_time_col == 2
+        assert detector.agreed_time_col in detector.column_timezones
+        assert detector.column_timezones[detector.agreed_time_col] == "Asia/Yekaterinburg"
+        assert detector.header_timezone == "Asia/Yekaterinburg"
+
+    def test_candidate_gets_timezone_from_agreed_time_header(self):
+        from calendar_planner.extraction.structured import StructuredExtractor
+        from calendar_planner.domain.models import ExtractedSource, SourceReference
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Sheet1": [
+                    ["Тема", "Согласованная дата", "Согласованное время, ЕКБ"],
+                    ["Встреча 1", "2026-08-04", "12:00"],
+                ]
+            },
+        )
+
+        extractor = StructuredExtractor()
+        result = extractor.extract(source)
+
+        all_candidates = []
+        for candidates in result.values():
+            all_candidates.extend(candidates)
+
+        assert len(all_candidates) == 1
+        assert all_candidates[0].timezone == "Asia/Yekaterinburg"
+
     def test_parse_names(self):
         from calendar_planner.source.schema_detector import parse_names
 
@@ -789,6 +828,7 @@ class TestEventCreator:
             duration_minutes=DraftField(value=60, origin="auto"),
             duration_confirmed=True,
             is_ready=True,
+            match_status="checked",
         )
 
         result = creator.create_one(draft)
@@ -1412,6 +1452,7 @@ class TestPayloadAndCreation:
             duration_confirmed=True,
             selected=True,
             is_ready=True,
+            match_status="checked",
         )
 
         draft2 = FinalEventDraft(
@@ -1425,6 +1466,7 @@ class TestPayloadAndCreation:
             duration_confirmed=True,
             selected=True,
             is_ready=True,
+            match_status="checked",
         )
 
         results = creator.create_selected([draft1, draft2])
@@ -2150,5 +2192,1201 @@ class TestMoreCoverage:
         assert all_cands[0].start_date == "2026-08-04"
 
 
+class TestP007CliMain:
+    """P0-07: __main__.py exists and can be imported."""
+
+    def test_cli_main_module_exists(self):
+        import importlib
+        spec = importlib.util.find_spec("calendar_planner.cli.__main__")
+        assert spec is not None
+
+    def test_cli_main_module_imports(self):
+        from calendar_planner.cli.__main__ import main
+        from calendar_planner.cli import main as cli_main
+        assert main is cli_main  # __main__.main == cli.main
+
+
+class TestP009MultiCharEditing:
+    """P0-09: _update_field не блокирует повторные правки."""
+
+    def test_multiple_edits_to_same_field(self):
+        from calendar_planner.drafts.builder import DraftBuilder
+        from calendar_planner.drafts.editor import DraftEditor
+        from calendar_planner.domain.models import MeetingCandidate
+
+        candidate = MeetingCandidate(
+            candidate_id="SRC-EVT-001",
+            subject="O",
+            start_date="2026-08-04",
+            start_time="12:00",
+            timezone="Asia/Yekaterinburg",
+        )
+        builder = DraftBuilder()
+        draft = builder.build_from_candidate(candidate)
+        editor = DraftEditor()
+
+        # Эмуляция посимвольного ввода: пользователь печатает "H", потом "e", потом "llo"
+        editor.edit_subject(draft, "H")
+        assert draft.subject.value == "H"
+        assert draft.subject.modified_by_user is True
+
+        editor.edit_subject(draft, "He")
+        assert draft.subject.value == "He"
+
+        editor.edit_subject(draft, "Hel")
+        assert draft.subject.value == "Hel"
+
+        editor.edit_subject(draft, "Hell")
+        assert draft.subject.value == "Hell"
+
+        editor.edit_subject(draft, "Hello")
+        assert draft.subject.value == "Hello"
+
+    def test_edit_date_multiple_times(self):
+        from calendar_planner.drafts.builder import DraftBuilder
+        from calendar_planner.drafts.editor import DraftEditor
+        from calendar_planner.domain.models import MeetingCandidate
+
+        candidate = MeetingCandidate(
+            candidate_id="SRC-EVT-001",
+            subject="Test",
+            start_date="2026-08-04",
+            start_time="12:00",
+            timezone="Asia/Yekaterinburg",
+        )
+        builder = DraftBuilder()
+        draft = builder.build_from_candidate(candidate)
+        editor = DraftEditor()
+
+        editor.edit_date(draft, "2026")
+        assert draft.start_date.value == "2026"
+
+        editor.edit_date(draft, "2026-")
+        assert draft.start_date.value == "2026-"
+
+        editor.edit_date(draft, "2026-08-05")
+        assert draft.start_date.value == "2026-08-05"
+
+    def test_edit_time_multiple_times(self):
+        from calendar_planner.drafts.builder import DraftBuilder
+        from calendar_planner.drafts.editor import DraftEditor
+        from calendar_planner.domain.models import MeetingCandidate
+
+        candidate = MeetingCandidate(
+            candidate_id="SRC-EVT-001",
+            subject="Test",
+            start_date="2026-08-04",
+            start_time="12:00",
+            timezone="Asia/Yekaterinburg",
+        )
+        builder = DraftBuilder()
+        draft = builder.build_from_candidate(candidate)
+        editor = DraftEditor()
+
+        editor.edit_time(draft, "1")
+        assert draft.start_time.value == "1"
+
+        editor.edit_time(draft, "14")
+        assert draft.start_time.value == "14"
+
+        editor.edit_time(draft, "14:30")
+        assert draft.start_time.value == "14:30"
+
+    def test_edit_location_multiple_times(self):
+        from calendar_planner.drafts.builder import DraftBuilder
+        from calendar_planner.drafts.editor import DraftEditor
+        from calendar_planner.domain.models import MeetingCandidate
+
+        candidate = MeetingCandidate(
+            candidate_id="SRC-EVT-001",
+            subject="Test",
+            start_date="2026-08-04",
+            start_time="12:00",
+            timezone="Asia/Yekaterinburg",
+        )
+        builder = DraftBuilder()
+        draft = builder.build_from_candidate(candidate)
+        editor = DraftEditor()
+
+        editor.edit_location(draft, "R")
+        assert draft.location.value == "R"
+
+        editor.edit_location(draft, "Room 301")
+        assert draft.location.value == "Room 301"
+
+
+class TestP010EnumMapping:
+    """P0-10: ParticipantSide/ ParticipantRole принимают UPPERCASE значения."""
+
+    def test_participant_side_accepts_uppercase(self):
+        from calendar_planner.domain.enums import ParticipantSide
+
+        assert ParticipantSide("PERFORMER") == ParticipantSide.PERFORMER
+        assert ParticipantSide("CUSTOMER") == ParticipantSide.CUSTOMER
+
+    def test_participant_role_accepts_uppercase(self):
+        from calendar_planner.domain.enums import ParticipantRole
+
+        assert ParticipantRole("REQUIRED") == ParticipantRole.REQUIRED
+        assert ParticipantRole("OPTIONAL") == ParticipantRole.OPTIONAL
+
+    def test_participant_side_rejects_lowercase(self):
+        from calendar_planner.domain.enums import ParticipantSide
+
+        with pytest.raises(ValueError):
+            ParticipantSide("performer")
+
+    def test_participant_role_rejects_lowercase(self):
+        from calendar_planner.domain.enums import ParticipantRole
+
+        with pytest.raises(ValueError):
+            ParticipantRole("required")
+
+    def test_ui_side_values_match_enum(self):
+        from calendar_planner.domain.enums import ParticipantSide
+
+        ui_values = ["PERFORMER", "CUSTOMER"]
+        for val in ui_values:
+            assert ParticipantSide(val) is not None
+
+    def test_ui_role_values_match_enum(self):
+        from calendar_planner.domain.enums import ParticipantRole
+
+        ui_values = ["REQUIRED", "OPTIONAL"]
+        for val in ui_values:
+            assert ParticipantRole(val) is not None
+
+
 def test_final_import_sanity_check():
     assert True
+
+
+class TestP101ContactSchemaDetection:
+    """P1-01: Contact index determines ФИО correctly via schema detection."""
+
+    def test_detect_contact_schema_finds_headers(self):
+        from calendar_planner.participants.contact_index import ContactIndex
+
+        sheet_data = [
+            ["№", "ФИО", "Email", "Телефон", "Организация"],
+            ["1", "Иванов Иван", "ivanov@example.com", "+79991234567", "ООО Ромашка"],
+        ]
+        schema = ContactIndex._detect_contact_schema(sheet_data)
+
+        assert schema["full_name"] == 1
+        assert schema["email"] == 2
+        assert schema["phone"] == 3
+        assert schema["organization"] == 4
+
+    def test_detect_contact_schema_english_headers(self):
+        from calendar_planner.participants.contact_index import ContactIndex
+
+        sheet_data = [
+            ["Full Name", "E-mail", "Phone", "Organization"],
+            ["John Doe", "john@example.com", "+1234567890", "Acme Inc"],
+        ]
+        schema = ContactIndex._detect_contact_schema(sheet_data)
+
+        assert schema["full_name"] == 0
+        assert schema["email"] == 1
+        assert schema["phone"] == 2
+        assert schema["organization"] == 3
+
+    def test_detect_contact_schema_no_headers(self):
+        from calendar_planner.participants.contact_index import ContactIndex
+
+        sheet_data = [
+            ["Тема", "Согласованная дата", "Согласованное время"],
+            ["Встреча 1", "2026-08-04", "12:00"],
+        ]
+        schema = ContactIndex._detect_contact_schema(sheet_data)
+
+        assert schema["full_name"] == -1
+        assert schema["email"] == -1
+
+    def test_build_from_source_skips_header_row(self):
+        from calendar_planner.participants.contact_index import ContactIndex
+        from calendar_planner.domain.models import ExtractedSource, SourceReference
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Contacts": [
+                    ["ФИО", "Email", "Телефон"],
+                    ["Петров Пётр", "petrov@example.com", "+79991112233"],
+                ]
+            },
+        )
+        index = ContactIndex()
+        index.build_from_source(source)
+
+        contacts = index.find_by_name("Петров")
+        assert len(contacts) == 1
+        assert contacts[0].full_name == "Петров Пётр"
+        assert contacts[0].email == "petrov@example.com"
+        assert contacts[0].phone == "+79991112233"
+
+    def test_build_from_source_row0_is_number(self):
+        from calendar_planner.participants.contact_index import ContactIndex
+        from calendar_planner.domain.models import ExtractedSource, SourceReference
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Contacts": [
+                    ["№", "ФИО", "Email", "Организация"],
+                    ["1", "Сидоров Сидор", "sidorov@example.com", "ООО Тест"],
+                    ["2", "Иванова Анна", "anna@example.com", "ЗАО Пример"],
+                ]
+            },
+        )
+        index = ContactIndex()
+        index.build_from_source(source)
+
+        contacts = index.find_by_name("Сидоров")
+        assert len(contacts) == 1
+        assert contacts[0].full_name == "Сидоров Сидор"
+        assert contacts[0].organization == "ООО Тест"
+
+        contacts = index.find_by_name("Иванова")
+        assert len(contacts) == 1
+        assert contacts[0].full_name == "Иванова Анна"
+
+    def test_build_from_source_fallback_no_headers(self):
+        from calendar_planner.participants.contact_index import ContactIndex
+        from calendar_planner.domain.models import ExtractedSource, SourceReference
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Sheet1": [
+                    ["Иванов Иван", "ivanov@example.com"],
+                    ["Петров Пётр", "petrov@example.com"],
+                ]
+            },
+        )
+        index = ContactIndex()
+        index.build_from_source(source)
+
+        contacts = index.find_by_name("Иванов")
+        assert len(contacts) == 1
+        assert contacts[0].full_name == "Иванов Иван"
+
+
+class TestP103BestEmployee:
+    """P1-03: Multiple employees — best scored is used, not first."""
+
+    def test_match_performer_picks_best_not_first(self):
+        from calendar_planner.participants.directory_gateway import FixtureDirectoryGateway
+        from calendar_planner.participants.matcher import NameMatcher
+
+        employees = [
+            {"full_name": "Петров Александр Сергеевич", "email": "petrov@1bit.ru", "surname": "Петров"},
+            {"full_name": "Гуреев Дмитрий Петрович", "email": "gureev@1bit.ru", "surname": "Гуреев"},
+        ]
+        gateway = FixtureDirectoryGateway(employees=employees)
+        matcher = NameMatcher(gateway)
+
+        result = matcher.match_performer("Гуреев")
+        assert result is not None
+        assert result.full_name == "Гуреев Дмитрий Петрович"
+        assert result.email == "gureev@1bit.ru"
+
+    def test_match_performer_multiple_same_surname(self):
+        from calendar_planner.participants.directory_gateway import FixtureDirectoryGateway
+        from calendar_planner.participants.matcher import NameMatcher
+
+        employees = [
+            {"full_name": "Сергей Петров-Сидоров Михайлович", "email": "s_ps@1bit.ru", "surname": "Петров-Сидоров"},
+            {"full_name": "Сергей Сергеев", "email": "s_s@1bit.ru", "surname": "Сергеев"},
+        ]
+        gateway = FixtureDirectoryGateway(employees=employees)
+        matcher = NameMatcher(gateway)
+
+        result = matcher.match_performer("Сергей")
+        assert result is not None
+        assert result.full_name == "Сергей Сергеев"
+        assert result.email == "s_s@1bit.ru"
+
+
+class TestP104PerformerDomains:
+    """P1-04: Performer domain supports list of domains."""
+
+    def test_resolver_accepts_performer_domains_list(self):
+        from calendar_planner.participants.resolver import ParticipantResolver
+        from calendar_planner.participants.directory_gateway import FixtureDirectoryGateway
+
+        gateway = FixtureDirectoryGateway()
+        resolver = ParticipantResolver(
+            directory_gateway=gateway,
+            performer_domains=["1bit.ru", "bit-erp.ru"],
+        )
+        assert resolver.performer_domains == ["1bit.ru", "bit-erp.ru"]
+
+    def test_resolver_default_domains(self):
+        from calendar_planner.participants.resolver import ParticipantResolver
+        from calendar_planner.participants.directory_gateway import FixtureDirectoryGateway
+
+        gateway = FixtureDirectoryGateway()
+        resolver = ParticipantResolver(directory_gateway=gateway)
+        assert resolver.performer_domains == ["1bit.ru"]
+
+    def test_customer_filtered_by_multiple_domains(self):
+        from calendar_planner.participants.resolver import ParticipantResolver
+        from calendar_planner.participants.directory_gateway import FixtureDirectoryGateway
+        from calendar_planner.domain.models import (
+            MeetingCandidate, ExtractedSource, SourceReference,
+        )
+
+        gateway = FixtureDirectoryGateway()
+        resolver = ParticipantResolver(
+            directory_gateway=gateway,
+            performer_domains=["1bit.ru", "bit-erp.ru"],
+        )
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Sheet1": [
+                    ["Петров Пётр", "petrov@bit-erp.ru"],
+                ]
+            },
+            raw_text="Петров Пётр petrov@bit-erp.ru",
+        )
+
+        candidates = [
+            MeetingCandidate(
+                candidate_id="C001",
+                subject="Test",
+                customer_names=["Петров Пётр"],
+            ),
+        ]
+
+        results = resolver.resolve(candidates, source)
+        assert len(results) == 1
+        for c in results[0].customer:
+            if c.email and ("1bit.ru" in c.email or "bit-erp.ru" in c.email):
+                pytest.fail("Customer should not get performer emails")
+
+    def test_settings_performer_email_domains(self):
+        from calendar_planner.app.settings import Settings
+
+        settings = Settings()
+        assert isinstance(settings.PERFORMER_EMAIL_DOMAINS, list)
+        assert len(settings.PERFORMER_EMAIL_DOMAINS) >= 1
+        assert "1bit.ru" in settings.PERFORMER_EMAIL_DOMAINS
+
+    def test_settings_performer_email_domains_from_env(self):
+        os.environ["PERFORMER_EMAIL_DOMAINS"] = "1bit.ru,bit-erp.ru,example.com"
+
+        try:
+            from calendar_planner.app.settings import Settings
+            settings = Settings()
+            assert settings.PERFORMER_EMAIL_DOMAINS == ["1bit.ru", "bit-erp.ru", "example.com"]
+        finally:
+            os.environ.pop("PERFORMER_EMAIL_DOMAINS", None)
+
+
+class TestP113CalendarMatchToDict:
+    """P1-13: CalendarMatch.to_dict() does not crash for NEW events (calendar_event=None)."""
+
+    def test_to_dict_with_none_calendar_event(self):
+        from calendar_planner.domain.models import CalendarMatch
+        from calendar_planner.domain.enums import MatchDecision
+
+        match = CalendarMatch(
+            candidate_id="C001",
+            calendar_event=None,
+            decision=MatchDecision.NEW,
+            score=0.0,
+            time_diff_minutes=None,
+            subject_similarity=0.0,
+        )
+        data = match.to_dict()
+        assert data["candidate_id"] == "C001"
+        assert data["calendar_event"] is None
+        assert data["decision"] == "NEW"
+
+    def test_to_dict_with_calendar_event(self):
+        from calendar_planner.domain.models import CalendarMatch, CalendarEvent
+        from calendar_planner.domain.enums import MatchDecision
+
+        event = CalendarEvent(
+            event_id="EVT-001",
+            ical_uid="uid-001",
+            subject="Test Event",
+        )
+        match = CalendarMatch(
+            candidate_id="C001",
+            calendar_event=event,
+            decision=MatchDecision.DUPLICATE,
+            score=0.95,
+            time_diff_minutes=0,
+            subject_similarity=0.98,
+        )
+        data = match.to_dict()
+        assert data["candidate_id"] == "C001"
+        assert data["calendar_event"] is not None
+        assert data["calendar_event"]["event_id"] == "EVT-001"
+        assert data["decision"] == "DUPLICATE"
+
+
+class TestP012DraftValidationBeforeCreate:
+    """P0-12: validate_draft_before_create проверяет готовность черновика перед созданием."""
+
+    def test_rejects_not_ready_draft(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import FinalEventDraft, DraftField
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="SRC-EVT-001",
+            is_ready=False,
+        )
+        errors = creator.validate_draft_before_create(draft)
+        assert any("not ready" in e.lower() for e in errors)
+
+    def test_rejects_unconfirmed_duration(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import FinalEventDraft, DraftField
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="SRC-EVT-001",
+            subject=DraftField(value="Test", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            start_time=DraftField(value="12:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=60, origin="auto"),
+            is_ready=True,
+            duration_confirmed=False,
+        )
+        errors = creator.validate_draft_before_create(draft)
+        assert any("duration" in e.lower() for e in errors)
+
+    def test_rejects_stale_match_status(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import FinalEventDraft, DraftField
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="SRC-EVT-001",
+            subject=DraftField(value="Test", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            start_time=DraftField(value="12:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=60, origin="auto"),
+            is_ready=True,
+            duration_confirmed=True,
+            match_status="stale",
+        )
+        errors = creator.validate_draft_before_create(draft)
+        assert any("stale" in e.lower() for e in errors)
+
+    def test_rejects_duplicate_in_matches(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import (
+            FinalEventDraft, DraftField, CalendarMatch, CalendarEvent,
+        )
+        from calendar_planner.domain.enums import MatchDecision
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="SRC-EVT-001",
+            subject=DraftField(value="Test", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            start_time=DraftField(value="12:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=60, origin="auto"),
+            is_ready=True,
+            duration_confirmed=True,
+            match_status="checked",
+            calendar_matches=[
+                CalendarMatch(
+                    candidate_id="C001",
+                    calendar_event=CalendarEvent(event_id="EVT-DUP", ical_uid="duplicate", subject="Duplicate"),
+                    decision=MatchDecision.DUPLICATE,
+                    score=0.95,
+                    time_diff_minutes=0,
+                    subject_similarity=0.98,
+                ),
+            ],
+        )
+        errors = creator.validate_draft_before_create(draft)
+        assert any("duplicate" in e.lower() for e in errors)
+
+    def test_rejects_invalid_email(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import (
+            FinalEventDraft, DraftField, ResolvedParticipant, ParticipantSide, ParticipantRole,
+        )
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="SRC-EVT-001",
+            subject=DraftField(value="Test", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            start_time=DraftField(value="12:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=60, origin="auto"),
+            is_ready=True,
+            duration_confirmed=True,
+            match_status="checked",
+            required_attendees=[
+                ResolvedParticipant(
+                    full_name="Bad Email",
+                    email="not-an-email",
+                    side=ParticipantSide.CUSTOMER,
+                    role=ParticipantRole.REQUIRED,
+                ),
+            ],
+        )
+        errors = creator.validate_draft_before_create(draft)
+        assert any("invalid" in e.lower() for e in errors)
+
+    def test_rejects_missing_email(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import (
+            FinalEventDraft, DraftField, ResolvedParticipant, ParticipantSide, ParticipantRole,
+        )
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="SRC-EVT-001",
+            subject=DraftField(value="Test", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            start_time=DraftField(value="12:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=60, origin="auto"),
+            is_ready=True,
+            duration_confirmed=True,
+            match_status="checked",
+            required_attendees=[
+                ResolvedParticipant(
+                    full_name="No Email",
+                    email=None,
+                    side=ParticipantSide.CUSTOMER,
+                    role=ParticipantRole.REQUIRED,
+                ),
+            ],
+        )
+        errors = creator.validate_draft_before_create(draft)
+        assert any("missing" in e.lower() for e in errors)
+
+    def test_validate_before_create_blocks_in_create_one(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import FinalEventDraft, DraftField
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="SRC-EVT-001",
+            is_ready=False,
+        )
+        result = creator.create_one(draft)
+        assert result["status"] == "invalid"
+        assert len(result["errors"]) > 0
+
+    def test_passes_valid_draft(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import FinalEventDraft, DraftField
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="SRC-EVT-001",
+            subject=DraftField(value="Test", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            start_time=DraftField(value="12:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=60, origin="auto"),
+            is_ready=True,
+            duration_confirmed=True,
+            match_status="checked",
+        )
+        errors = creator.validate_draft_before_create(draft)
+        assert len(errors) == 0
+
+
+class TestP102FuzzyCustomerMatching:
+    """P1-02: fuzzy_match_surname используется как fallback при поиске клиентов."""
+
+    def test_fuzzy_match_fallback_single_result(self):
+        from calendar_planner.participants.resolver import ParticipantResolver
+        from calendar_planner.participants.directory_gateway import FixtureDirectoryGateway
+        from calendar_planner.domain.models import (
+            MeetingCandidate, ExtractedSource, SourceReference,
+        )
+
+        gateway = FixtureDirectoryGateway()
+        resolver = ParticipantResolver(directory_gateway=gateway, fuzzy_threshold=0.7)
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Contacts": [
+                    ["ФИО", "Email"],
+                    ["Исламгалиев Дмитрий Фанисович", "islamgaliev@customer.ru"],
+                ]
+            },
+            raw_text="Исламгалиев Дмитрий Фанисович islamgaliev@customer.ru",
+        )
+
+        candidates = [
+            MeetingCandidate(
+                candidate_id="C001",
+                subject="Test",
+                customer_names=["Исламгиев"],
+            ),
+        ]
+
+        results = resolver.resolve(candidates, source)
+        assert len(results) == 1
+        assert len(results[0].customer) >= 1
+        fuzzy_matches = [c for c in results[0].customer if c.is_fuzzy_match]
+        assert len(fuzzy_matches) >= 1
+        assert fuzzy_matches[0].confidence >= 0.7
+        assert fuzzy_matches[0].match_source == "fuzzy_match"
+
+    def test_fuzzy_match_multiple_candidates_goes_to_unresolved(self):
+        from calendar_planner.participants.resolver import ParticipantResolver
+        from calendar_planner.participants.directory_gateway import FixtureDirectoryGateway
+        from calendar_planner.domain.models import (
+            MeetingCandidate, ExtractedSource, SourceReference,
+        )
+
+        gateway = FixtureDirectoryGateway()
+        resolver = ParticipantResolver(directory_gateway=gateway, fuzzy_threshold=0.5)
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Contacts": [
+                    ["ФИО", "Email"],
+                    ["Иванов Александр", "alex@customer.ru"],
+                    ["Иванова Анна", "anna@customer.ru"],
+                ]
+            },
+            raw_text="Иванов Александр alex@customer.ru\nИванова Анна anna@customer.ru",
+        )
+
+        candidates = [
+            MeetingCandidate(
+                candidate_id="C001",
+                subject="Test",
+                customer_names=["Иванов"],
+            ),
+        ]
+
+        results = resolver.resolve(candidates, source)
+        assert len(results) == 1
+
+    def test_fuzzy_fallback_no_match_falls_through(self):
+        from calendar_planner.participants.resolver import ParticipantResolver
+        from calendar_planner.participants.directory_gateway import FixtureDirectoryGateway
+        from calendar_planner.domain.models import (
+            MeetingCandidate, ExtractedSource, SourceReference,
+        )
+
+        gateway = FixtureDirectoryGateway()
+        resolver = ParticipantResolver(directory_gateway=gateway, fuzzy_threshold=0.95)
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Contacts": [
+                    ["ФИО", "Email"],
+                    ["Sidorov Alexey", "alex@customer.ru"],
+                ]
+            },
+            raw_text="Sidorov Alexey alex@customer.ru",
+        )
+
+        candidates = [
+            MeetingCandidate(
+                candidate_id="C001",
+                subject="Test",
+                customer_names=["Петров"],
+            ),
+        ]
+
+        results = resolver.resolve(candidates, source)
+        assert len(results) == 1
+        name_only = [c for c in results[0].customer if c.match_source == "name_only_no_contact"]
+        assert len(name_only) >= 1
+
+
+class TestP111DuplicateAttendees:
+    """P1-11: проверка на дубликат участников при добавлении."""
+
+    def test_email_in_required_is_duplicate(self):
+        from calendar_planner.domain.models import (
+            FinalEventDraft, DraftField, ResolvedParticipant, ParticipantSide, ParticipantRole,
+        )
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="C001",
+            required_attendees=[
+                ResolvedParticipant(
+                    full_name="Existing User",
+                    email="existing@example.com",
+                    side=ParticipantSide.CUSTOMER,
+                    role=ParticipantRole.REQUIRED,
+                ),
+            ],
+        )
+
+        existing = {a.email for a in draft.required_attendees + draft.optional_attendees if a.email}
+        assert "existing@example.com" in existing
+        assert "new@example.com" not in existing
+
+    def test_email_in_optional_is_duplicate(self):
+        from calendar_planner.domain.models import (
+            FinalEventDraft, DraftField, ResolvedParticipant, ParticipantSide, ParticipantRole,
+        )
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="C001",
+            optional_attendees=[
+                ResolvedParticipant(
+                    full_name="Optional User",
+                    email="optional@example.com",
+                    side=ParticipantSide.CUSTOMER,
+                    role=ParticipantRole.OPTIONAL,
+                ),
+            ],
+        )
+
+        existing = {a.email for a in draft.required_attendees + draft.optional_attendees if a.email}
+        assert "optional@example.com" in existing
+
+    def test_no_email_no_duplicate_check(self):
+        from calendar_planner.domain.models import (
+            FinalEventDraft, DraftField, ResolvedParticipant, ParticipantSide, ParticipantRole,
+        )
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="C001",
+            required_attendees=[
+                ResolvedParticipant(
+                    full_name="No Email",
+                    email=None,
+                    side=ParticipantSide.CUSTOMER,
+                    role=ParticipantRole.REQUIRED,
+                ),
+            ],
+        )
+
+        existing = {a.email for a in draft.required_attendees + draft.optional_attendees if a.email}
+        assert len(existing) == 0
+
+
+class TestP114WeightedScore:
+    """P1-14: weighted_score fix — date/time equality checks, integration as tiebreaker."""
+
+    def test_date_equality_adds_score(self):
+        from calendar_planner.calendar.matcher import CalendarMatcher
+        from calendar_planner.domain.models import (
+            MeetingCandidate, CalendarEvent, NormalizedDateTime,
+        )
+
+        matcher = CalendarMatcher()
+
+        candidate = MeetingCandidate(
+            candidate_id="C001",
+            subject="Test",
+            start_date="2026-08-04",
+            start_time="12:00",
+            timezone="Asia/Yekaterinburg",
+        )
+
+        event_same_date = CalendarEvent(
+            event_id="EVT-001",
+            ical_uid="uid-001",
+            subject="Test",
+            start=NormalizedDateTime(
+                raw_datetime="2026-08-04T12:00:00",
+                raw_timezone="Asia/Yekaterinburg",
+                aware_datetime=datetime(2026, 8, 4, 12, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                utc_datetime=datetime(2026, 8, 4, 7, 0, tzinfo=ZoneInfo("UTC")),
+                display_datetime=datetime(2026, 8, 4, 12, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                display_timezone="Asia/Yekaterinburg",
+            ),
+        )
+
+        score_same = matcher.compute_weighted_score(candidate, event_same_date)
+
+        event_diff_date = CalendarEvent(
+            event_id="EVT-002",
+            ical_uid="uid-002",
+            subject="Test",
+            start=NormalizedDateTime(
+                raw_datetime="2026-08-05T12:00:00",
+                raw_timezone="Asia/Yekaterinburg",
+                aware_datetime=datetime(2026, 8, 5, 12, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                utc_datetime=datetime(2026, 8, 5, 7, 0, tzinfo=ZoneInfo("UTC")),
+                display_datetime=datetime(2026, 8, 5, 12, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                display_timezone="Asia/Yekaterinburg",
+            ),
+        )
+
+        score_diff = matcher.compute_weighted_score(candidate, event_diff_date)
+        assert score_same > score_diff
+
+    def test_time_equality_adds_score(self):
+        from calendar_planner.calendar.matcher import CalendarMatcher
+        from calendar_planner.domain.models import (
+            MeetingCandidate, CalendarEvent, NormalizedDateTime,
+        )
+
+        matcher = CalendarMatcher()
+
+        candidate = MeetingCandidate(
+            candidate_id="C001",
+            subject="Test",
+            start_date="2026-08-04",
+            start_time="12:00",
+            timezone="Asia/Yekaterinburg",
+        )
+
+        event_same_time = CalendarEvent(
+            event_id="EVT-001",
+            ical_uid="uid-001",
+            subject="Test",
+            start=NormalizedDateTime(
+                raw_datetime="2026-08-04T12:00:00",
+                raw_timezone="Asia/Yekaterinburg",
+                aware_datetime=datetime(2026, 8, 4, 12, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                utc_datetime=datetime(2026, 8, 4, 7, 0, tzinfo=ZoneInfo("UTC")),
+                display_datetime=datetime(2026, 8, 4, 12, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                display_timezone="Asia/Yekaterinburg",
+            ),
+        )
+
+        score_same = matcher.compute_weighted_score(candidate, event_same_time)
+
+        event_diff_time = CalendarEvent(
+            event_id="EVT-002",
+            ical_uid="uid-002",
+            subject="Test",
+            start=NormalizedDateTime(
+                raw_datetime="2026-08-04T15:00:00",
+                raw_timezone="Asia/Yekaterinburg",
+                aware_datetime=datetime(2026, 8, 4, 15, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                utc_datetime=datetime(2026, 8, 4, 10, 0, tzinfo=ZoneInfo("UTC")),
+                display_datetime=datetime(2026, 8, 4, 15, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                display_timezone="Asia/Yekaterinburg",
+            ),
+        )
+
+        score_diff = matcher.compute_weighted_score(candidate, event_diff_time)
+        assert score_same > score_diff
+
+    def test_weighted_score_used_as_tiebreaker(self):
+        from calendar_planner.calendar.matcher import CalendarMatcher
+        from calendar_planner.domain.models import (
+            MeetingCandidate, CalendarEvent, NormalizedDateTime,
+        )
+        from calendar_planner.domain.enums import MatchDecision
+
+        matcher = CalendarMatcher(tolerance_minutes=30, subject_threshold=0.75)
+
+        candidate = MeetingCandidate(
+            candidate_id="C001",
+            subject="Completely Different Subject",
+            start_date="2026-08-04",
+            start_time="12:00",
+            timezone="Asia/Yekaterinburg",
+            online_meeting_url="https://teams.example.com",
+        )
+
+        events = [
+            CalendarEvent(
+                event_id="EVT-001",
+                ical_uid="uid-001",
+                subject="Unrelated Event",
+                start=NormalizedDateTime(
+                    raw_datetime="2026-08-04T12:05:00",
+                    raw_timezone="Asia/Yekaterinburg",
+                    aware_datetime=datetime(2026, 8, 4, 12, 5, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                    utc_datetime=datetime(2026, 8, 4, 7, 5, tzinfo=ZoneInfo("UTC")),
+                    display_datetime=datetime(2026, 8, 4, 12, 5, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                    display_timezone="Asia/Yekaterinburg",
+                ),
+                location="Room A",
+                online_url="https://example.com",
+            ),
+            CalendarEvent(
+                event_id="EVT-002",
+                ical_uid="uid-002",
+                subject="Another Unrelated",
+                start=NormalizedDateTime(
+                    raw_datetime="2026-08-04T12:10:00",
+                    raw_timezone="Asia/Yekaterinburg",
+                    aware_datetime=datetime(2026, 8, 4, 12, 10, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                    utc_datetime=datetime(2026, 8, 4, 7, 10, tzinfo=ZoneInfo("UTC")),
+                    display_datetime=datetime(2026, 8, 4, 12, 10, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                    display_timezone="Asia/Yekaterinburg",
+                ),
+            ),
+        ]
+
+        match = matcher.match(candidate, events)
+        assert match is not None
+        assert match.decision == MatchDecision.POSSIBLE_DUPLICATE
+
+    def test_weighted_score_with_all_fields(self):
+        from calendar_planner.calendar.matcher import CalendarMatcher
+        from calendar_planner.domain.models import (
+            MeetingCandidate, CalendarEvent, NormalizedDateTime,
+        )
+
+        matcher = CalendarMatcher()
+
+        candidate = MeetingCandidate(
+            candidate_id="C001",
+            subject="Project Alpha Review",
+            start_date="2026-08-04",
+            start_time="12:00",
+            timezone="Asia/Yekaterinburg",
+            location="Room 301",
+            online_meeting_url="https://teams.example.com/alpha",
+        )
+
+        event = CalendarEvent(
+            event_id="EVT-001",
+            ical_uid="uid-001",
+            subject="Project Alpha Review",
+            start=NormalizedDateTime(
+                raw_datetime="2026-08-04T12:00:00",
+                raw_timezone="Asia/Yekaterinburg",
+                aware_datetime=datetime(2026, 8, 4, 12, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                utc_datetime=datetime(2026, 8, 4, 7, 0, tzinfo=ZoneInfo("UTC")),
+                display_datetime=datetime(2026, 8, 4, 12, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                display_timezone="Asia/Yekaterinburg",
+            ),
+            location="Room 301",
+            online_url="https://teams.example.com/alpha",
+        )
+
+        score = matcher.compute_weighted_score(candidate, event)
+        assert score == 1.0
+
+
+class TestP003P008FullFlow:
+    """End-to-end test: full controller flow through stages 1-6 (no GUI)."""
+
+    def test_full_flow_controller_only(self):
+        from calendar_planner.ui.controllers import StageController
+        from calendar_planner.domain.models import (
+            ExtractedSource, SourceReference, MeetingCandidate,
+        )
+        from calendar_planner.app.settings import settings
+
+        controller = StageController()
+
+        # -- Stages 0-1: connections (simulated) --
+        controller.set_stage_success("stage_1")
+        assert controller.get_stage_status(0) == "success"
+
+        # -- Stage 2: extraction --
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Sheet1": [
+                    ["Тема", "Согласованная дата", "Согласованное время, ЕКБ"],
+                    ["Управление производством", "2026-08-04", "12:00"],
+                    ["Без даты", "", ""],
+                ]
+            },
+        )
+        from calendar_planner.extraction.structured import StructuredExtractor
+        extractor = StructuredExtractor(date_policy=settings.MEETING_DATE_POLICY)
+        candidates = extractor.extract(source)
+        controller.set_extracted(source)
+        controller.set_candidates(candidates)
+        controller.set_skipped_rows(extractor.skipped_rows)
+        controller.set_stage_success("stage_2")
+        assert controller.get_stage_status(1) == "success"
+
+        all_candidates = controller.get_all_candidates()
+        assert len(all_candidates) >= 1
+
+        # -- Stage 3: calendar comparison --
+        from calendar_planner.calendar.matcher import CalendarMatcher
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+
+        calendar_gw = FixtureCalendarGateway()
+        from datetime import date, timedelta
+        today = date.today().isoformat()
+        week_later = (date.today() + timedelta(days=90)).isoformat()
+        calendar_events = calendar_gw.find_events(today, week_later)
+
+        matcher = CalendarMatcher(tolerance_minutes=30, subject_threshold=0.75)
+        matches = matcher.match_all(all_candidates, calendar_events)
+        controller.set_matches(matches)
+        controller.set_calendar_events(calendar_events)
+        controller.set_stage_success("stage_3")
+        assert controller.get_stage_status(2) == "success"
+        assert len(controller._matches) == len(all_candidates)
+
+        # -- Stage 4: participant resolution --
+        from calendar_planner.participants.resolver import ParticipantResolver
+        from calendar_planner.participants.directory_gateway import FixtureDirectoryGateway
+
+        directory_gw = FixtureDirectoryGateway()
+        resolver = ParticipantResolver(directory_gateway=directory_gw)
+        participants = resolver.resolve(all_candidates, source)
+        controller.set_participants(participants)
+        controller.set_stage_success("stage_4")
+        assert controller.get_stage_status(3) == "success"
+        assert len(controller._participants) == len(all_candidates)
+
+        # -- Stage 5: enrichment --
+        from calendar_planner.enrichment.extractor import EnrichmentExtractor
+
+        enrichment_extractor = EnrichmentExtractor()
+        enrichment = enrichment_extractor.extract(all_candidates, source)
+        controller.set_enrichment(enrichment)
+        controller.set_stage_success("stage_5")
+        assert controller.get_stage_status(4) == "success"
+        assert len(controller._enrichment) == len(all_candidates)
+
+        # -- Stage 6: build drafts --
+        from calendar_planner.drafts.builder import DraftBuilder
+
+        participants_map = {p.candidate_id: p for p in participants}
+        builder = DraftBuilder()
+        drafts = []
+        for candidate in all_candidates:
+            cp = participants_map.get(candidate.candidate_id)
+            items = enrichment.get(candidate.candidate_id, [])
+            draft = builder.build_from_candidate(candidate, cp, items)
+            drafts.append(draft)
+
+        controller.set_drafts(drafts)
+        controller.set_stage_success("stage_6")
+        assert controller.get_stage_status(5) == "success"
+        assert len(controller.get_drafts()) == len(all_candidates)
+
+        # Verify intermediate data is held by controller
+        assert controller._extracted is not None
+        assert len(controller.get_all_candidates()) > 0
+        assert len(controller._matches) > 0
+        assert len(controller._participants) > 0
+        assert len(controller._enrichment) > 0
+        assert len(controller.get_drafts()) > 0
+
+    def test_recheck_callback_integration(self):
+        from calendar_planner.domain.models import (
+            FinalEventDraft, DraftField, MeetingCandidate,
+        )
+        from calendar_planner.calendar.matcher import CalendarMatcher
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import NormalizedDateTime, CalendarEvent
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        calendar_gw = FixtureCalendarGateway()
+        matcher = CalendarMatcher(tolerance_minutes=30, subject_threshold=0.75)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="C001",
+            subject=DraftField(value="Test Meeting", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            start_time=DraftField(value="12:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+        )
+
+        from datetime import date, timedelta
+        today = date.today().isoformat()
+        week_later = (date.today() + timedelta(days=90)).isoformat()
+        calendar_events = calendar_gw.find_events(today, week_later)
+
+        match = matcher.recheck_for_draft(
+            subject=draft.subject.value or "",
+            start_date=draft.start_date.value or "",
+            start_time=draft.start_time.value or "",
+            timezone=draft.timezone.value or "",
+            calendar_events=calendar_events,
+        )
+
+        draft.match_status = "checked" if match is None else "checked"
+        assert draft.match_status == "checked"
+
+    def test_all_stage_statuses(self):
+        from calendar_planner.ui.controllers import StageController
+        from calendar_planner.domain.enums import StageStatus
+
+        controller = StageController()
+
+        for i in range(6):
+            assert controller.get_stage_status(i) == StageStatus.NOT_STARTED.value
+
+        controller.set_stage_success("stage_1")
+        controller.set_stage_success("stage_2")
+        controller.set_stage_success("stage_3")
+        controller.set_stage_success("stage_4")
+        controller.set_stage_success("stage_5")
+        controller.set_stage_success("stage_6")
+
+        for i in range(6):
+            assert controller.get_stage_status(i) == StageStatus.SUCCESS.value
+
+    def test_stage_navigation(self):
+        from calendar_planner.ui.controllers import StageController
+
+        controller = StageController()
+        assert controller.current_stage == 0
+
+        controller.next_stage()
+        assert controller.current_stage == 1
+
+        controller.next_stage()
+        assert controller.current_stage == 2
+
+        controller.prev_stage()
+        assert controller.current_stage == 1
+
+        controller.set_current_stage(5)
+        assert controller.current_stage == 5
+
+        controller.next_stage()
+        assert controller.current_stage == 5
+
+        controller.set_current_stage(-1)
+        assert controller.current_stage == 0

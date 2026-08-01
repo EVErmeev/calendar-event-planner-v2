@@ -240,7 +240,7 @@ class CalendarMatch:
     def to_dict(self) -> dict:
         return {
             "candidate_id": self.candidate_id,
-            "calendar_event": self.calendar_event.to_dict(),
+            "calendar_event": self.calendar_event.to_dict() if self.calendar_event is not None else None,
             "decision": self.decision.value,
             "score": self.score,
             "time_diff_minutes": self.time_diff_minutes,

@@ -113,6 +113,7 @@ class TableSchemaDetector:
         self.link_cols: list[int] = []
         self.description_cols: list[int] = []
         self.header_timezone: str | None = None
+        self.column_timezones: dict[int, str] = {}
         self.header_row: int = 0
 
     def detect(self, sheet_data: list[list[str]]) -> None:
@@ -127,7 +128,7 @@ class TableSchemaDetector:
 
                 tz = detect_timezone_from_text(cell)
                 if tz:
-                    self._update_timezone_for_col(tz, normalized)
+                    self._update_timezone_for_col(tz, col_idx, normalized)
 
                 if self.subject_col is None and any(p.search(normalized) for p in SUBJECT_PATTERNS):
                     if not any(p.search(normalized) for p in AGREED_DATE_PATTERNS + AGREED_TIME_PATTERNS):
@@ -135,12 +136,15 @@ class TableSchemaDetector:
 
                 if self.agreed_date_col is None and any(p.search(normalized) for p in AGREED_DATE_PATTERNS):
                     self.agreed_date_col = col_idx
-                    tz = detect_timezone_from_text(cell)
-                    if tz:
-                        self.header_timezone = tz
+                    tz_date = detect_timezone_from_text(cell)
+                    if tz_date:
+                        self.header_timezone = tz_date
 
                 if self.agreed_time_col is None and any(p.search(normalized) for p in AGREED_TIME_PATTERNS):
                     self.agreed_time_col = col_idx
+                    tz_time = detect_timezone_from_text(cell)
+                    if tz_time and not self.header_timezone:
+                        self.header_timezone = tz_time
 
                 if self.planned_date_col is None and any(p.search(normalized) for p in PLANNED_DATE_PATTERNS):
                     self.planned_date_col = col_idx
@@ -172,8 +176,8 @@ class TableSchemaDetector:
                 self.header_row = row_idx
                 break
 
-    def _update_timezone_for_col(self, tz: str, normalized_header: str) -> None:
-        pass
+    def _update_timezone_for_col(self, tz: str, col_idx: int, normalized_header: str) -> None:
+        self.column_timezones[col_idx] = tz
 
     def _has_enough_columns(self) -> bool:
         found = sum(1 for x in [
@@ -197,6 +201,7 @@ class TableSchemaDetector:
             "link_cols": self.link_cols,
             "description_cols": self.description_cols,
             "header_timezone": self.header_timezone,
+            "column_timezones": self.column_timezones,
             "header_row": self.header_row,
         }
 

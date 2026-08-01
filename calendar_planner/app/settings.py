@@ -24,6 +24,9 @@ class Settings:
         self.CONTACT_FUZZY_THRESHOLD: float = float(
             os.getenv("CONTACT_FUZZY_THRESHOLD", "0.85")
         )
+        self.PERFORMER_EMAIL_DOMAINS: list[str] = [
+            d.strip() for d in os.getenv("PERFORMER_EMAIL_DOMAINS", "1bit.ru").split(",") if d.strip()
+        ]
         self.RUNS_DIR: Path = Path(os.getenv("RUNS_DIR", "./runs"))
         self.MAX_FILE_SIZE_MB: int = int(os.getenv("MAX_FILE_SIZE_MB", "50"))
 
