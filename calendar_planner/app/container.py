@@ -117,9 +117,14 @@ class AppContainer:
             self._init_warnings.append("Using FixtureDirectoryGateway (test env)")
             return FixtureDirectoryGateway()
 
-        raise RuntimeError(
-            "No directory gateway available. "
-            "Configure EWS_ENDPOINT + EWS_USERNAME or set APP_ENV=test."
+        from calendar_planner.participants.directory_gateway import MCPDirectoryGateway
+        self._init_warnings.append(
+            "No EWS directory configured — falling back to MCP directory gateway"
+        )
+        mcp_call = self._mcp_transport.call_tool if self._mcp_transport else None
+        return MCPDirectoryGateway(
+            mcp_call_function=mcp_call,
+            search_tool=self.settings.MCP_DIRECTORY_SEARCH_TOOL,
         )
 
     def check_all_connections(self) -> dict:

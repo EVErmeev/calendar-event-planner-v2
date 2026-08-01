@@ -5726,8 +5726,9 @@ class TestAppContainerDirectoryGateway:
         from calendar_planner.app.container import AppContainer
         container = AppContainer(s)
 
-        with pytest.raises(RuntimeError, match="No directory gateway available"):
-            container.get_directory_gateway()
+        gw = container.get_directory_gateway()
+        from calendar_planner.participants.directory_gateway import MCPDirectoryGateway
+        assert isinstance(gw, MCPDirectoryGateway)
 
 
 class TestDirectorySearchResult:
