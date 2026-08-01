@@ -499,8 +499,8 @@ class TestFindEvents:
         assert events[1].subject == "Meeting B"
 
         mock_call.assert_called_once_with("list_events", {
-            "start": "2025-06-01",
-            "end": "2025-06-30",
+            "days_back": mock.ANY,
+            "days_ahead": mock.ANY,
         })
 
     def test_find_events_returns_empty_when_no_mcp_call(self, caplog):

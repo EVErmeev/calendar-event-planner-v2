@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from calendar_planner.calendar.datetime_normalizer import parse_iso_datetime
 from calendar_planner.domain.models import CalendarEvent
@@ -55,9 +56,18 @@ class MCPCalendarGateway:
             _logger.warning("find_events: MCP call function not available — returning empty list")
             return []
 
+        from datetime import date as date_type
+        from datetime import datetime as dt_type
+        today = date_type.today()
+        start_dt = dt_type.strptime(start_date, "%Y-%m-%d").date()
+        end_dt = dt_type.strptime(end_date, "%Y-%m-%d").date()
+
+        delta_back = (today - start_dt).days
+        delta_ahead = (end_dt - today).days
+
         raw_result = self._mcp_call(self._find_tool, {
-            "start": start_date,
-            "end": end_date,
+            "days_back": max(0, delta_back),
+            "days_ahead": max(1, delta_ahead),
         })
 
         # Normalize BEFORE parsing — call exactly once, use result throughout
@@ -142,6 +152,14 @@ class MCPCalendarGateway:
                 parsed = json.loads(raw_result)
                 return self._normalize_response(parsed)
             except json.JSONDecodeError:
+                # Try to parse as Exchange MCP text response (Markdown format)
+                text_events = self._parse_text_response(raw_result)
+                if text_events:
+                    _logger.info(
+                        "_normalize_response: parsed %d events from text response",
+                        len(text_events),
+                    )
+                    return text_events
                 _logger.warning(
                     "_normalize_response: response is a non-JSON string: %s",
                     raw_result[:200],
@@ -175,6 +193,44 @@ class MCPCalendarGateway:
 
     def get_last_raw_response(self) -> list[dict]:
         return self._last_response_raw
+
+    def _parse_text_response(self, text: str) -> list[dict]:
+        events = []
+        current_date = None
+        date_re = re.compile(r"^###\s+(\d{4}-\d{2}-\d{2})")
+        event_re = re.compile(r"^\d+\.\s*\[(\d{2}:\d{2})\s*[-–—]\s*(\d{2}:\d{2})\]\s*(.+)")
+        for line in text.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            dm = date_re.match(line)
+            if dm:
+                current_date = dm.group(1)
+                continue
+            if current_date is None:
+                continue
+            em = event_re.match(line)
+            if em:
+                st = em.group(1)
+                et = em.group(2)
+                rest = em.group(3).strip()
+                url_match = re.search(r"\((https?://[^)]+)\)", rest)
+                online_url = url_match.group(1) if url_match else None
+                if url_match:
+                    rest = rest[:url_match.start()].strip()
+                attendees = [{"email": e} for e in re.findall(r"([\w.+-]+@[\w.-]+)", rest)]
+                for e in re.findall(r"([\w.+-]+@[\w.-]+)", rest):
+                    rest = rest.replace(e, "").strip()
+                subject = re.sub(r"\s*[-–]\s*$", "", rest).strip()
+                events.append({
+                    "id": f"ex-{current_date}-{len(events) + 1}",
+                    "subject": subject[:200],
+                    "start": f"{current_date}T{st}:00",
+                    "end": f"{current_date}T{et}:00",
+                    "online_url": online_url,
+                    "attendees": attendees,
+                })
+        return events
 
     def _parse_calendar_event(self, raw: dict) -> CalendarEvent | None:
         try:

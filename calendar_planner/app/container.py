@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from calendar_planner.app.mcp_transport import MCPTransport
+from calendar_planner.app.stdio_mcp_transport import StdioMCPTransport
 from calendar_planner.calendar.mcp_gateway import MCPCalendarGateway
 from calendar_planner.participants.directory_gateway import MCPDirectoryGateway
 
@@ -16,7 +17,7 @@ class AppContainer:
         self.settings = settings
         self._calendar_gateway = None
         self._directory_gateway = None
-        self._mcp_transport: MCPTransport | None = None
+        self._mcp_transport: MCPTransport | StdioMCPTransport | None = None
         self._mcp_initialized = False
         self._mcp_disabled_or_unavailable = False
         self._init_warnings: list[str] = []
@@ -31,6 +32,8 @@ class AppContainer:
         Stores state clearly:
           - _mcp_disabled_or_unavailable = True  if MCP is off or not reachable
           - _mcp_initialized = True              only on full success
+
+        Supports both HTTP URL and stdio command transports.
         """
         if not self.settings.MCP_ENABLED:
             self._mcp_disabled_or_unavailable = True
@@ -41,16 +44,19 @@ class AppContainer:
                 "message": "MCP is disabled in settings",
             }
 
-        if not self.settings.MCP_SERVER_URL:
+        # Try stdio transport first if MCP_STDIO_COMMAND is set
+        if self.settings.MCP_STDIO_COMMAND:
+            self._mcp_transport = StdioMCPTransport(self.settings.MCP_STDIO_COMMAND)
+        elif self.settings.MCP_SERVER_URL:
+            self._mcp_transport = MCPTransport(self.settings.MCP_SERVER_URL)
+        else:
             self._mcp_disabled_or_unavailable = True
-            self._init_warnings.append("MCP_SERVER_URL is empty")
+            self._init_warnings.append("Neither MCP_SERVER_URL nor MCP_STDIO_COMMAND is set")
             return {
                 "component": "MCP",
                 "status": "warning",
-                "message": "MCP_SERVER_URL is not set — MCP transport not available",
+                "message": "MCP connection not configured",
             }
-
-        self._mcp_transport = MCPTransport(self.settings.MCP_SERVER_URL)
         result = self._mcp_transport.connect()
 
         if self._mcp_transport.is_connected():

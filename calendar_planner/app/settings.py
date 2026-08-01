@@ -35,6 +35,7 @@ class Settings:
 
         self.MCP_ENABLED: bool = os.getenv("MCP_ENABLED", "true").lower() == "true"
         self.MCP_SERVER_URL: str = os.getenv("MCP_SERVER_URL", "")
+        self.MCP_STDIO_COMMAND: str = os.getenv("MCP_STDIO_COMMAND", "")
         self.MCP_CALENDAR_FIND_TOOL: str = os.getenv("MCP_CALENDAR_FIND_TOOL", "list_events")
         self.MCP_CALENDAR_CREATE_TOOL: str = os.getenv("MCP_CALENDAR_CREATE_TOOL", "create_event")
         self.MCP_DIRECTORY_SEARCH_TOOL: str = os.getenv("MCP_DIRECTORY_SEARCH_TOOL", "search_employees")
