@@ -45,6 +45,10 @@ class Settings:
 
         self.EXCHANGE_ENABLED: bool = os.getenv("EXCHANGE_ENABLED", "false").lower() == "true"
 
+        self.EWS_ENDPOINT: str = os.getenv("EWS_ENDPOINT", "https://mail.1cbit.ru/EWS/Exchange.asmx")
+        self.EWS_USERNAME: str = os.getenv("EWS_USERNAME", "")
+        self.EWS_PASSWORD: str = os.getenv("EWS_PASSWORD", "")
+
     @property
     def is_development(self) -> bool:
         return self.APP_ENV == "development"

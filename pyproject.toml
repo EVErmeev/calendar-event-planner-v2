@@ -19,6 +19,7 @@ dependencies = [
     "python-Levenshtein>=0.25.0",
     "tzdata>=2024.1",
     "requests>=2.31.0",
+    "requests-ntlm>=1.2.0",
 ]
 
 [project.optional-dependencies]
@@ -66,4 +67,5 @@ ignore = [
     "G201",    # logging-exc-info — стилистическая рекомендация
     "PERF102", # incorrect-dict-iterator — стилистическая рекомендация
     "S110",    # try-except-pass — намеренно для cleanup/graceful degradation
+    "DTZ001",  # naive datetime — допустимо в тестовых фикстурах
 ]

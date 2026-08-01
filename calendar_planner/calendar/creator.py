@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from calendar_planner.domain.enums import MatchDecision
 from calendar_planner.domain.models import FinalEventDraft
-from calendar_planner.domain.validation import validate_email, validate_payload
+from calendar_planner.domain.validation import preflight_validate, validate_payload
 
 
 class EventCreator:
@@ -116,35 +115,7 @@ class EventCreator:
     def validate_payload(self, payload: dict) -> list[str]:
         return validate_payload(payload)
 
-    def validate_draft_before_create(self, draft: FinalEventDraft) -> list[str]:
-        errors = []
-
-        if not draft.is_ready:
-            errors.append("Draft is not ready")
-        if not draft.duration_confirmed:
-            errors.append("Duration not confirmed")
-        if draft.match_status == "stale":
-            errors.append("Match status is stale — recheck required")
-        if draft.match_status in ("not_checked", ""):
-            errors.append("Match has not been checked")
-        if draft.match_status == "checked":
-            current_hash = draft.compute_input_hash()
-            if current_hash != draft.match_input_hash:
-                errors.append("Match hash is stale — recheck required")
-
-        for m in draft.calendar_matches:
-            if m.decision and (
-                m.decision == MatchDecision.DUPLICATE
-                or m.decision.value == "DUPLICATE"
-            ):
-                errors.append(f"Duplicate found in calendar: {m.calendar_event.event_id}")
-                draft.is_ready = False
-
-        for att in draft.required_attendees + draft.optional_attendees:
-            if att.email:
-                if not validate_email(att.email):
-                    errors.append(f"Invalid email: {att.email} ({att.full_name})")
-            else:
-                errors.append(f"Missing email for {att.full_name}")
-
-        return errors
+    def validate_draft_before_create(self, draft: FinalEventDraft) -> list[dict]:
+        result = preflight_validate(draft)
+        draft.is_ready = result.ready
+        return result.blocking_errors

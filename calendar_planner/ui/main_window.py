@@ -9,6 +9,14 @@ from calendar_planner.session.storage import SessionStorage
 from calendar_planner.ui.controllers import StageController
 
 
+def _format_errors(errors: list) -> str:
+    if not errors:
+        return ""
+    if isinstance(errors[0], dict):
+        return ", ".join(e.get("message_ru", str(e)) for e in errors)
+    return ", ".join(str(e) for e in errors)
+
+
 class MainWindow:
     def __init__(self, root: tk.Tk, container=None):
         self.root = root
@@ -232,9 +240,6 @@ class MainWindow:
                 self.controller.set_skipped_rows(extractor.skipped_rows)
                 self.controller.set_stage_success("stage_2")
 
-                self.root.after(0, lambda: self._show_progress("Сравнение с календарём...", 50))
-                self._run_stages_3_to_6_bg(extracted, all_candidates)
-
                 self.root.after(0, self._hide_progress)
                 self.root.after(0, lambda: self._update_stage_indicators())
                 self.root.after(0, lambda: self.controller.set_current_stage(1))
@@ -335,6 +340,7 @@ class MainWindow:
                 "status": "error",
                 "error": str(exc),
             })
+            return
 
         if self._cancel_requested: return
         self.root.after(0, lambda: self._show_progress("Определение участников...", 70))
@@ -738,7 +744,7 @@ class MainWindow:
             creator = EventCreator(calendar_gw, dry_run=True)
             result = creator.create_one(draft)
             payload = creator.build_payload(draft)
-            errors = ", ".join(result.get("errors", [])) if result.get("errors") else ""
+            errors = _format_errors(result.get("errors", []))
             frame_obj = frame if frame is not None else self._stage_frames.get(5)
             if frame_obj is not None:
                 frame_obj.show_creation_result(
@@ -825,7 +831,7 @@ class MainWindow:
                 event_id = result.get("event_id", "") or result.get("result", {}).get("id", "")
                 event_url = result.get("url", "") or result.get("result", {}).get("htmlLink", "")
                 status = result.get("status", "error")
-                errors = ", ".join(result.get("errors", [])) if result.get("errors") else ""
+                errors = _format_errors(result.get("errors", []))
                 frame_obj.show_creation_result(
                     draft_id=draft.draft_id,
                     subject=draft.subject.value or "Без темы",

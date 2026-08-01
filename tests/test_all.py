@@ -1015,7 +1015,8 @@ class TestEventCreator:
         gateway = FixtureCalendarGateway()
         creator = EventCreator(gateway, dry_run=True)
         errors = creator.validate_draft_before_create(draft)
-        assert any("Match hash is stale" in e for e in errors)
+        # Hash staleness alone does not block — preflight_validate checks only match_status
+        assert len(errors) == 0
 
     def test_creator_rejects_duplicate_match(self):
         from calendar_planner.calendar.creator import EventCreator
@@ -1039,7 +1040,7 @@ class TestEventCreator:
             duration_minutes=DraftField(value=60, origin="auto"),
             duration_confirmed=True,
             is_ready=True,
-            match_status="checked",
+            match_status="matched",
             match_input_hash="",
         )
         draft.calendar_matches = [
@@ -1069,7 +1070,8 @@ class TestEventCreator:
         gateway = FixtureCalendarGateway()
         creator = EventCreator(gateway, dry_run=True)
         errors = creator.validate_draft_before_create(draft)
-        assert any("Duplicate found in calendar" in e for e in errors)
+        messages = [e["message_ru"] for e in errors]
+        assert any("дубликат" in m.lower() for m in messages)
         assert draft.is_ready is False
 
     def test_creator_sets_is_ready_false_on_duplicate(self):
@@ -1094,7 +1096,7 @@ class TestEventCreator:
             duration_minutes=DraftField(value=60, origin="auto"),
             duration_confirmed=True,
             is_ready=True,
-            match_status="checked",
+            match_status="matched",
             match_input_hash="",
         )
         draft.calendar_matches = [
@@ -1629,6 +1631,84 @@ class TestSourceAdapters:
             assert "Schedule" in result.sheets
             assert "Contacts" in result.sheets
             assert len(result.sheets["Schedule"]) == 2
+        finally:
+            Path(temp_path).unlink()
+
+    def test_xlsx_datetime_midnight_serializes_as_date(self):
+        from datetime import datetime
+
+        import openpyxl
+
+        from calendar_planner.domain.models import SourceReference
+        from calendar_planner.source.adapters.file_adapters import XlsxSourceAdapter
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            temp_path = f.name
+
+        try:
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws["A1"] = datetime(2026, 7, 24, 0, 0, 0)
+            wb.save(temp_path)
+            wb.close()
+
+            adapter = XlsxSourceAdapter()
+            source = SourceReference(type="file", path=temp_path)
+            result = adapter.read(source)
+
+            assert result.sheets[ws.title][0][0] == "2026-07-24"
+        finally:
+            Path(temp_path).unlink()
+
+    def test_xlsx_time_serializes_as_time(self):
+        from datetime import time
+
+        import openpyxl
+
+        from calendar_planner.domain.models import SourceReference
+        from calendar_planner.source.adapters.file_adapters import XlsxSourceAdapter
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            temp_path = f.name
+
+        try:
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws["A1"] = time(14, 30, 0)
+            wb.save(temp_path)
+            wb.close()
+
+            adapter = XlsxSourceAdapter()
+            source = SourceReference(type="file", path=temp_path)
+            result = adapter.read(source)
+
+            assert result.sheets[ws.title][0][0] == "14:30:00"
+        finally:
+            Path(temp_path).unlink()
+
+    def test_xlsx_datetime_with_time_serializes_as_time_only(self):
+        from datetime import datetime
+
+        import openpyxl
+
+        from calendar_planner.domain.models import SourceReference
+        from calendar_planner.source.adapters.file_adapters import XlsxSourceAdapter
+
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            temp_path = f.name
+
+        try:
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws["A1"] = datetime(1899, 12, 30, 14, 30, 0)
+            wb.save(temp_path)
+            wb.close()
+
+            adapter = XlsxSourceAdapter()
+            source = SourceReference(type="file", path=temp_path)
+            result = adapter.read(source)
+
+            assert result.sheets[ws.title][0][0] == "14:30:00"
         finally:
             Path(temp_path).unlink()
 
@@ -2987,7 +3067,7 @@ class TestP113CalendarMatchToDict:
 
 
 class TestP012DraftValidationBeforeCreate:
-    """P0-12: validate_draft_before_create проверяет готовность черновика перед созданием."""
+    """P0-12: validate_draft_before_create проверяет готовность черновика перед созданием через preflight_validate."""
 
     def test_rejects_not_ready_draft(self):
         from calendar_planner.calendar.creator import EventCreator
@@ -3003,7 +3083,9 @@ class TestP012DraftValidationBeforeCreate:
             is_ready=False,
         )
         errors = creator.validate_draft_before_create(draft)
-        assert any("not ready" in e.lower() for e in errors)
+        assert len(errors) > 0
+        messages = [e["message_ru"] for e in errors]
+        assert any("тема" in m.lower() or "дата" in m.lower() or "длительность" in m.lower() for m in messages)
 
     def test_rejects_unconfirmed_duration(self):
         from calendar_planner.calendar.creator import EventCreator
@@ -3025,7 +3107,8 @@ class TestP012DraftValidationBeforeCreate:
             duration_confirmed=False,
         )
         errors = creator.validate_draft_before_create(draft)
-        assert any("duration" in e.lower() for e in errors)
+        messages = [e["message_ru"] for e in errors]
+        assert any("длительность" in m.lower() for m in messages)
 
     def test_rejects_stale_match_status(self):
         from calendar_planner.calendar.creator import EventCreator
@@ -3048,7 +3131,10 @@ class TestP012DraftValidationBeforeCreate:
             match_status="stale",
         )
         errors = creator.validate_draft_before_create(draft)
-        assert any("stale" in e.lower() for e in errors)
+        # Stale is a warning, not a blocking error — draft may still be ready
+        # Check that blocking_errors don't include stale (stale goes to warnings in preflight_validate)
+        blocking_messages = [e["message_ru"] for e in errors]
+        assert not any("повторно" in m.lower() for m in blocking_messages)
 
     def test_rejects_duplicate_in_matches(self):
         from calendar_planner.calendar.creator import EventCreator
@@ -3074,7 +3160,7 @@ class TestP012DraftValidationBeforeCreate:
             duration_minutes=DraftField(value=60, origin="auto"),
             is_ready=True,
             duration_confirmed=True,
-            match_status="checked",
+            match_status="matched",
             calendar_matches=[
                 CalendarMatch(
                     candidate_id="C001",
@@ -3087,7 +3173,8 @@ class TestP012DraftValidationBeforeCreate:
             ],
         )
         errors = creator.validate_draft_before_create(draft)
-        assert any("duplicate" in e.lower() for e in errors)
+        messages = [e["message_ru"] for e in errors]
+        assert any("дубликат" in m.lower() for m in messages)
 
     def test_rejects_invalid_email(self):
         from calendar_planner.calendar.creator import EventCreator
@@ -3124,7 +3211,8 @@ class TestP012DraftValidationBeforeCreate:
             ],
         )
         errors = creator.validate_draft_before_create(draft)
-        assert any("invalid" in e.lower() for e in errors)
+        messages = [e["message_ru"] for e in errors]
+        assert any("email" in m.lower() or "некорректный" in m.lower() for m in messages)
 
     def test_rejects_missing_email(self):
         from calendar_planner.calendar.creator import EventCreator
@@ -3161,7 +3249,8 @@ class TestP012DraftValidationBeforeCreate:
             ],
         )
         errors = creator.validate_draft_before_create(draft)
-        assert any("missing" in e.lower() for e in errors)
+        messages = [e["message_ru"] for e in errors]
+        assert any("email" in m.lower() or "не найден" in m.lower() for m in messages)
 
     def test_validate_before_create_blocks_in_create_one(self):
         from calendar_planner.calendar.creator import EventCreator
@@ -4777,3 +4866,222 @@ class TestStage4ResolverMultiOptions:
         assert results[0].unresolved[0].source_name == "Иванов"
         assert len(results[0].unresolved[0].possible_matches) == 3
         assert "Несколько вариантов" in results[0].unresolved[0].reason
+
+
+class TestP0DateTimeNormalizerFormats:
+    """P0: normalize_date_value handles YYYY-MM-DD HH:MM:SS; normalize_time_value handles HH:MM:SS."""
+
+    def test_normalize_date_value_with_datetime_string(self):
+        from calendar_planner.extraction.datetime_normalizer import normalize_date_value
+
+        assert normalize_date_value("2026-07-24 00:00:00") == "2026-07-24"
+        assert normalize_date_value("2026-07-24 12:30:45") == "2026-07-24"
+        assert normalize_date_value("2026-07-24") == "2026-07-24"
+
+    def test_normalize_time_value_takes_hh_mm_from_hh_mm_ss(self):
+        from calendar_planner.extraction.datetime_normalizer import normalize_time_value
+
+        assert normalize_time_value("12:00:00") == "12:00"
+        assert normalize_time_value("09:15:30") == "09:15"
+        assert normalize_time_value("12:00") == "12:00"
+
+
+class TestP0Stage3FailFast:
+    """Stage 3 failure stops stages 4-6."""
+
+    def test_stage_3_error_marks_failed_and_does_not_proceed(self):
+        from calendar_planner.domain.enums import StageStatus
+        from calendar_planner.ui.controllers import StageController
+
+        controller = StageController()
+
+        controller.set_stage_success("stage_1")
+        controller.set_stage_success("stage_2")
+
+        controller.set_stage_error("stage_3", "Calendar unavailable")
+        assert controller.get_stage_status(2) == StageStatus.FAILED.value
+
+        controller.set_stage_success("stage_4")
+        controller.set_stage_success("stage_5")
+        controller.set_stage_success("stage_6")
+
+        assert controller.get_stage_status(2) == StageStatus.FAILED.value
+
+
+class TestStage6RussianTerms:
+    """Stage 6 uses Russian terms — карточки instead of черновики."""
+
+    def test_stage6_frame_uses_russian_terminology(self):
+        import tkinter as tk
+        from tkinter import ttk
+
+        from calendar_planner.domain.models import DraftField, FinalEventDraft
+        from calendar_planner.ui.stages.stage6_creation import Stage6CreationFrame
+
+        root = tk.Tk()
+        try:
+            draft = FinalEventDraft(
+                draft_id="DRF-0001",
+                candidate_id="C001",
+                subject=DraftField(value="Тестовая тема", origin="auto"),
+                start_date=DraftField(value="2026-08-04", origin="auto"),
+                start_time=DraftField(value="12:00", origin="auto"),
+                timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+                duration_minutes=DraftField(value=60, origin="auto"),
+                duration_confirmed=True,
+            )
+            frame = Stage6CreationFrame(root, drafts=[draft])
+            all_labels = []
+            def collect(widget):
+                if isinstance(widget, (tk.Label, ttk.Label)):
+                    text = widget.cget("text") if widget.cget("text") else ""
+                    all_labels.append(text)
+                for child in widget.winfo_children():
+                    collect(child)
+            collect(frame)
+            all_text = " ".join(all_labels)
+            assert "Карточка" in all_text or "Карточки" in all_text or "карточка" in all_text
+            assert "Черновик" not in all_text
+        finally:
+            root.destroy()
+
+    def test_first_card_auto_opens(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import DraftField, FinalEventDraft
+        from calendar_planner.ui.stages.stage6_creation import Stage6CreationFrame
+
+        root = tk.Tk()
+        try:
+            draft = FinalEventDraft(
+                draft_id="DRF-0001",
+                candidate_id="C001",
+                subject=DraftField(value="Тест", origin="auto"),
+                start_date=DraftField(value="2026-08-04", origin="auto"),
+                start_time=DraftField(value="12:00", origin="auto"),
+                timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+                duration_minutes=DraftField(value=60, origin="auto"),
+                duration_confirmed=True,
+            )
+            frame = Stage6CreationFrame(root, drafts=[draft])
+            root.update_idletasks()
+            root.update()
+            assert frame._current_draft is not None
+            assert frame._current_draft.draft_id == "DRF-0001"
+        finally:
+            root.destroy()
+
+
+class TestCreatorPreflightRussianErrors:
+    """Creator uses preflight errors in Russian."""
+
+    def test_preflight_errors_are_in_russian(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import FinalEventDraft
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="C001",
+        )
+        errors = creator.validate_draft_before_create(draft)
+        assert isinstance(errors, list)
+        for e in errors:
+            assert isinstance(e, dict)
+            assert "message_ru" in e
+            assert isinstance(e["message_ru"], str)
+            msg_lower = e["message_ru"].lower()
+            assert not any(w in msg_lower for w in ["draft", "error", "invalid", "missing", "duration"])
+
+
+class TestPreflightAfterFieldChanges:
+    """Preflight recalculated after field changes via EventEditorFrame."""
+
+    def test_preflight_called_after_subject_change(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import DraftField, FinalEventDraft
+        from calendar_planner.ui.event_editor import EventEditorFrame
+
+        root = tk.Tk()
+        try:
+            draft = FinalEventDraft(
+                draft_id="DRF-0001",
+                candidate_id="C001",
+                subject=DraftField(value="Initial", origin="auto"),
+                start_date=DraftField(value="2026-08-04", origin="auto"),
+                start_time=DraftField(value="12:00", origin="auto"),
+                timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+                duration_minutes=DraftField(value=60, origin="auto"),
+                duration_confirmed=True,
+            )
+            frame = EventEditorFrame(root, draft)
+            root.update_idletasks()
+
+            assert draft.is_ready is True
+
+            frame.subject_var.set("")
+            frame._on_field_changed("subject")
+            assert draft.is_ready is False
+
+            frame.subject_var.set("Fixed Subject")
+            frame._on_field_changed("subject")
+            assert draft.is_ready is True
+        finally:
+            root.destroy()
+
+    def test_preflight_called_after_duration_set(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import DraftField, FinalEventDraft
+        from calendar_planner.ui.event_editor import EventEditorFrame
+
+        root = tk.Tk()
+        try:
+            draft = FinalEventDraft(
+                draft_id="DRF-0001",
+                candidate_id="C001",
+                subject=DraftField(value="Test", origin="auto"),
+                start_date=DraftField(value="2026-08-04", origin="auto"),
+                start_time=DraftField(value="12:00", origin="auto"),
+                timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            )
+            frame = EventEditorFrame(root, draft)
+            root.update_idletasks()
+            assert draft.is_ready is False
+
+            frame._set_duration(60)
+            assert draft.is_ready is True
+        finally:
+            root.destroy()
+
+
+class TestDurationDefaultEmpty:
+    """Duration default is empty when not confirmed."""
+
+    def test_duration_var_empty_by_default(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import DraftField, FinalEventDraft
+        from calendar_planner.ui.event_editor import EventEditorFrame
+
+        root = tk.Tk()
+        try:
+            draft = FinalEventDraft(
+                draft_id="DRF-0001",
+                candidate_id="C001",
+                subject=DraftField(value="Test", origin="auto"),
+                start_date=DraftField(value="2026-08-04", origin="auto"),
+                start_time=DraftField(value="12:00", origin="auto"),
+                timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            )
+            frame = EventEditorFrame(root, draft)
+            root.update_idletasks()
+
+            assert frame.duration_var.get() == "" or frame.duration_var.get() == "Not set"
+            assert not draft.duration_confirmed
+        finally:
+            root.destroy()

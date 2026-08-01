@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import io
 from pathlib import Path
 from typing import Protocol
@@ -66,6 +67,21 @@ class XlsxSourceAdapter:
     def can_handle(self, source: SourceReference) -> bool:
         return bool(source.path and Path(source.path).suffix.lower() in (".xlsx", ".xlsm"))
 
+    @staticmethod
+    def _serialize_cell(cell) -> str:
+        value = cell.value
+        if value is None:
+            return ""
+        if isinstance(value, dt.datetime):
+            if value.hour == 0 and value.minute == 0 and value.second == 0:
+                return value.strftime("%Y-%m-%d")
+            return value.strftime("%H:%M:%S")
+        if isinstance(value, dt.date) and not isinstance(value, dt.datetime):
+            return value.strftime("%Y-%m-%d")
+        if isinstance(value, dt.time):
+            return value.strftime("%H:%M:%S")
+        return str(value).strip()
+
     def read(self, source: SourceReference) -> ExtractedSource:
         import openpyxl
 
@@ -88,7 +104,7 @@ class XlsxSourceAdapter:
             for row_idx, row in enumerate(ws.iter_rows(), start=1):
                 cells: list[str] = []
                 for col_idx, cell in enumerate(row, start=1):
-                    value = str(cell.value) if cell.value is not None else ""
+                    value = self._serialize_cell(cell)
                     cells.append(value)
                     if cell.hyperlink:
                         key = f"{sheet_name}!{cell.coordinate}"

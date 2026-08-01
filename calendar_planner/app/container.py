@@ -6,6 +6,7 @@ from calendar_planner.app.mcp_transport import MCPTransport
 from calendar_planner.app.stdio_mcp_transport import StdioMCPTransport
 from calendar_planner.calendar.mcp_gateway import MCPCalendarGateway
 from calendar_planner.participants.directory_gateway import MCPDirectoryGateway
+from calendar_planner.participants.ews_directory_gateway import EWSDirectoryGateway
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,17 @@ class AppContainer:
 
     def get_directory_gateway(self):
         if self._directory_gateway is not None:
+            return self._directory_gateway
+
+        if self.settings.EWS_USERNAME and self.settings.EWS_ENDPOINT:
+            self._directory_gateway = EWSDirectoryGateway(
+                endpoint=self.settings.EWS_ENDPOINT,
+                username=self.settings.EWS_USERNAME,
+                password=self.settings.EWS_PASSWORD,
+            )
+            self._init_warnings.append(
+                f"Using EWSDirectoryGateway (EWS endpoint: {self.settings.EWS_ENDPOINT})"
+            )
             return self._directory_gateway
 
         if self._is_test_env:

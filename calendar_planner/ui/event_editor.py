@@ -304,6 +304,7 @@ class EventEditorFrame(ttk.Frame):
             self.editor.edit_url(self.draft, self.url_var.get())
         self._update_end_datetime()
         self._mark_stale()
+        self._recalculate_readiness()
 
     def _on_description_changed(self) -> None:
         pass
@@ -315,19 +316,17 @@ class EventEditorFrame(ttk.Frame):
         )
 
     def _recalculate_readiness(self) -> None:
-        from calendar_planner.domain.validation import preflight_validate
-        result = preflight_validate(self.draft)
-        self.draft.is_ready = result.ready
         self._update_ready_status()
 
     def _update_ready_status(self) -> None:
-        from calendar_planner.domain.validation import validate_draft_ready
-        errors = validate_draft_ready(self.draft)
-        self.draft.is_ready = len(errors) == 0
+        from calendar_planner.domain.validation import preflight_validate
+        result = preflight_validate(self.draft)
+        self.draft.is_ready = result.ready
 
-        if errors:
+        if not result.ready:
+            messages = [e["message_ru"] for e in result.blocking_errors]
             self.status_label.config(
-                text=f"Ошибки: {'; '.join(errors[:2])}",
+                text=f"Ошибки: {'; '.join(messages[:2])}",
                 foreground="red",
             )
         else:
@@ -382,6 +381,7 @@ class EventEditorFrame(ttk.Frame):
             self.editor.add_attendee(self.draft, participant, ParticipantRole(role_var.get()))
             self._populate_attendees()
             self._mark_stale()
+            self._recalculate_readiness()
             dialog.destroy()
 
         ttk.Button(dialog, text="Добавить", command=add).pack(pady=15)
@@ -396,6 +396,7 @@ class EventEditorFrame(ttk.Frame):
             self.editor.remove_attendee(self.draft, values[1])
             self._populate_attendees()
             self._mark_stale()
+            self._recalculate_readiness()
 
     def _toggle_role(self) -> None:
         selection = self.attendees_tree.selection()
@@ -409,6 +410,7 @@ class EventEditorFrame(ttk.Frame):
             self.editor.change_attendee_role(self.draft, values[1], new_role)
             self._populate_attendees()
             self._mark_stale()
+            self._recalculate_readiness()
 
     def _restore_attendees(self) -> None:
         self.draft.required_attendees = list(self._original_draft.required_attendees)
@@ -475,6 +477,7 @@ class EventEditorFrame(ttk.Frame):
     def _save_all(self) -> None:
         self._save_description()
         self.draft.match_status = "stale"
+        self._recalculate_readiness()
         self.status_label.config(text="Изменения сохранены. Требуется проверка дубля.", foreground="orange")
 
     def get_draft(self) -> FinalEventDraft:

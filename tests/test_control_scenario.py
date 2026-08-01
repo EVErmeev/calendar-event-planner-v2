@@ -384,7 +384,9 @@ class TestControlScenario:
         for r in all_creation_results:
             if r["status"] == "invalid":
                 assert any(
-                    "Duplicate found in calendar" in e for e in r["errors"]
+                    isinstance(e, dict) and e.get("code") == "duplicate"
+                    or (isinstance(e, str) and "duplicate" in e.lower())
+                    for e in r["errors"]
                 ), f"No duplicate error in {r['draft_id']}: {r['errors']}"
 
         # Новая встреча — единственная, прошедшая до stage создания

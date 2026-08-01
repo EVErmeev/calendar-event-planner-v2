@@ -124,7 +124,7 @@ def preflight_validate(draft: FinalEventDraft) -> PreflightResult:
                 "how_to_fix": f"Исправьте email участника «{att.full_name}».",
             })
 
-    if draft.match_status == "matched" and any(
+    if draft.match_status in ("matched", "checked") and any(
         m.decision.value in ("DUPLICATE", "POSSIBLE_DUPLICATE")
         for m in draft.calendar_matches
     ):
@@ -177,7 +177,7 @@ def validate_draft_ready(draft: Any) -> list[str]:
     if draft.match_status == "stale":
         errors.append("Требуется повторная проверка дублей")
 
-    if draft.match_status == "matched" and any(
+    if draft.match_status in ("matched", "checked") and any(
         m.decision.value in ("DUPLICATE", "POSSIBLE_DUPLICATE")
         for m in draft.calendar_matches
     ):

@@ -17,14 +17,21 @@ class Stage6CreationFrame(ttk.Frame):
         self._editor_frame: EventEditorFrame | None = None
         self._draft_vars: dict[str, tk.BooleanVar] = {}
         self._current_draft: FinalEventDraft | None = None
-        self._results_table: ttk.Frame | None = None
+        self._results_table: ttk.LabelFrame | None = None
+        self._results_tree: ttk.Treeview | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
         header = ttk.Frame(self)
         header.pack(fill=tk.X, pady=(0, 10))
         ttk.Label(header, text="Этап 6 — Создание событий", font=("", 12, "bold")).pack(anchor=tk.W)
-        ttk.Label(header, text="Черновики событий для подтверждения и создания", font=("", 8)).pack(anchor=tk.W)
+        ttk.Label(header, text="Карточки событий для подтверждения и создания", font=("", 8)).pack(anchor=tk.W)
+        ttk.Label(
+            header,
+            text="Карточка события — это предварительно заполненное событие календаря. На этом этапе оно ещё не создано.",
+            font=("", 8, "italic"),
+            foreground="gray",
+        ).pack(anchor=tk.W, pady=(2, 0))
 
         paned = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True)
@@ -48,7 +55,7 @@ class Stage6CreationFrame(ttk.Frame):
 
         no_draft_label = ttk.Label(
             self._right_frame,
-            text="Выберите черновик из списка слева\nдля просмотра и редактирования",
+            text="Выберите карточку из списка слева\nдля просмотра и редактирования",
             font=("", 10, "italic"),
             anchor=tk.CENTER,
             justify=tk.CENTER,
@@ -67,6 +74,9 @@ class Stage6CreationFrame(ttk.Frame):
         btn_frame.pack(fill=tk.X, pady=5, padx=5)
         ttk.Button(btn_frame, text="Выбрать все", command=self._select_all).pack(side=tk.LEFT, padx=2)
         ttk.Button(btn_frame, text="Снять все", command=self._deselect_all).pack(side=tk.LEFT, padx=2)
+
+        if self.drafts:
+            self.after(10, lambda: self._on_draft_click(self.drafts[0]))
 
     def _add_draft_row(self, parent: ttk.Frame, draft: FinalEventDraft, var: tk.BooleanVar) -> None:
         row = ttk.Frame(parent)
@@ -131,6 +141,7 @@ class Stage6CreationFrame(ttk.Frame):
         self._draft_vars = {}
         self._current_draft = None
         self._results_table = None
+        self._results_tree = None
         self._build_ui()
 
     def _build_action_bar(self) -> None:
@@ -138,14 +149,14 @@ class Stage6CreationFrame(ttk.Frame):
         bar.pack(fill=tk.X, pady=(10, 0), padx=5)
         ttk.Button(bar, text="Предпросмотр (dry-run)", command=self._create_selected).pack(side=tk.LEFT, padx=2)
         ttk.Button(bar, text="Предпросмотр отмеченных", command=self._create_checked).pack(side=tk.LEFT, padx=2)
-        ttk.Button(bar, text="Создать выбранное", command=self._real_create_selected).pack(side=tk.LEFT, padx=(20, 2))
-        ttk.Button(bar, text="Создать отмеченные", command=self._real_create_checked).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bar, text="Создать текущую карточку", command=self._real_create_selected).pack(side=tk.LEFT, padx=(20, 2))
+        ttk.Button(bar, text="Создать отмеченные события", command=self._real_create_checked).pack(side=tk.LEFT, padx=2)
 
     def _create_selected(self) -> None:
         draft = self._current_draft
         if draft is None:
             from tkinter import messagebox
-            messagebox.showinfo("Информация", "Сначала выберите черновик для предпросмотра.")
+            messagebox.showinfo("Информация", "Сначала выберите карточку для предпросмотра.")
             return
         if self.on_create is not None:
             self.on_create(draft)
@@ -156,7 +167,7 @@ class Stage6CreationFrame(ttk.Frame):
         selected = self.get_selected_drafts()
         if not selected:
             from tkinter import messagebox
-            messagebox.showinfo("Информация", "Нет отмеченных черновиков.")
+            messagebox.showinfo("Информация", "Нет отмеченных карточек событий.")
             return
         if self.on_create is not None:
             for draft in selected:
@@ -169,7 +180,7 @@ class Stage6CreationFrame(ttk.Frame):
         draft = self._current_draft
         if draft is None:
             from tkinter import messagebox
-            messagebox.showinfo("Информация", "Сначала выберите черновик.")
+            messagebox.showinfo("Информация", "Сначала выберите карточку.")
             return
         from tkinter import messagebox
         if not messagebox.askyesno(
@@ -190,7 +201,7 @@ class Stage6CreationFrame(ttk.Frame):
         selected = self.get_selected_drafts()
         if not selected:
             from tkinter import messagebox
-            messagebox.showinfo("Информация", "Нет отмеченных черновиков.")
+            messagebox.showinfo("Информация", "Нет отмеченных карточек событий.")
             return
         from tkinter import messagebox
         count = len(selected)
@@ -208,40 +219,80 @@ class Stage6CreationFrame(ttk.Frame):
 
     def _show_dry_run_result(self, draft_id: str, subject: str) -> None:
         self._ensure_results_table()
-        row = ttk.Frame(self._results_table)
-        row.pack(fill=tk.X, pady=1)
-        ttk.Label(row, text=draft_id, width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-        ttk.Label(row, text=subject[:40], width=30, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-        ttk.Label(row, text="DRY RUN — событие не создано", foreground="gray", width=30, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-        ttk.Label(row, text="—", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-        ttk.Label(row, text="—", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-        ttk.Label(row, text="—", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        self._results_tree.insert("", tk.END, values=(
+            draft_id,
+            subject[:60],
+            "DRY RUN — событие не создано",
+            "—",
+        ))
 
     def show_creation_result(self, draft_id: str, subject: str, status: str, event_id: str = "", url: str = "", errors: str = "") -> None:
         self._ensure_results_table()
-        row = ttk.Frame(self._results_table)
-        row.pack(fill=tk.X, pady=1)
-        ttk.Label(row, text=draft_id, width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-        ttk.Label(row, text=subject[:40], width=30, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-        status_color = "green" if status == "created" else "red"
         status_text = "Создано" if status == "created" else f"Ошибка: {status}"
-        ttk.Label(row, text=status_text, foreground=status_color, width=30, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-        ttk.Label(row, text=event_id or "—", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-        ttk.Label(row, text=url or "—", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2)
-        ttk.Label(row, text=errors or "—", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        tag = "created" if status == "created" else "failed"
+        self._results_tree.insert("", tk.END, values=(
+            draft_id,
+            subject[:60],
+            status_text,
+            errors or "—",
+        ), tags=(tag,))
 
     def _ensure_results_table(self) -> None:
         if self._results_table is not None:
             return
         results_frame = ttk.LabelFrame(self, text="Результаты создания", padding=5)
-        results_frame.pack(fill=tk.X, pady=(10, 0), padx=5)
+        results_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0), padx=5)
         self._results_table = results_frame
 
-        header = ttk.Frame(self._results_table)
-        header.pack(fill=tk.X, pady=(0, 2))
-        ttk.Label(header, text="Draft ID", width=12, anchor=tk.W, font=("", 8, "bold")).pack(side=tk.LEFT, padx=2)
-        ttk.Label(header, text="Subject", width=30, anchor=tk.W, font=("", 8, "bold")).pack(side=tk.LEFT, padx=2)
-        ttk.Label(header, text="Status", width=30, anchor=tk.W, font=("", 8, "bold")).pack(side=tk.LEFT, padx=2)
-        ttk.Label(header, text="Event ID", width=12, anchor=tk.W, font=("", 8, "bold")).pack(side=tk.LEFT, padx=2)
-        ttk.Label(header, text="URL", width=20, anchor=tk.W, font=("", 8, "bold")).pack(side=tk.LEFT, padx=2)
-        ttk.Label(header, text="Errors", width=20, anchor=tk.W, font=("", 8, "bold")).pack(side=tk.LEFT, padx=2)
+        columns = ("event", "status", "errors")
+        self._results_tree = ttk.Treeview(
+            results_frame,
+            columns=columns,
+            show="headings",
+            height=6,
+        )
+        self._results_tree.heading("event", text="Тема / Технический ID")
+        self._results_tree.heading("status", text="Статус")
+        self._results_tree.heading("errors", text="Ошибки")
+        self._results_tree.column("event", width=250, minwidth=100)
+        self._results_tree.column("status", width=150, minwidth=80)
+        self._results_tree.column("errors", width=300, minwidth=100)
+
+        self._results_tree.tag_configure("created", foreground="green")
+        self._results_tree.tag_configure("failed", foreground="red")
+
+        v_scroll = ttk.Scrollbar(results_frame, orient=tk.VERTICAL, command=self._results_tree.yview)
+        h_scroll = ttk.Scrollbar(results_frame, orient=tk.HORIZONTAL, command=self._results_tree.xview)
+        self._results_tree.configure(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
+
+        self._results_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+
+        self._results_tree.bind("<Double-1>", self._on_result_double_click)
+
+    def _on_result_double_click(self, event) -> None:
+        selection = self._results_tree.selection()
+        if not selection:
+            return
+        values = self._results_tree.item(selection[0], "values")
+        if len(values) < 3:
+            return
+        errors = values[3] if len(values) > 3 else values[2]
+        if not errors or errors == "—":
+            return
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Ошибки создания")
+        dialog.geometry("500x300")
+
+        text = tk.Text(dialog, wrap=tk.WORD, font=("Consolas", 9))
+        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        text.insert(tk.END, errors)
+        text.config(state=tk.DISABLED)
+
+        def copy_errors():
+            self.clipboard_clear()
+            self.clipboard_append(errors)
+
+        ttk.Button(dialog, text="Копировать", command=copy_errors).pack(pady=(0, 10))
