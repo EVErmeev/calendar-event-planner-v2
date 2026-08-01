@@ -3,10 +3,7 @@ from __future__ import annotations
 import logging
 from unittest import mock
 
-import pytest
-
 from calendar_planner.calendar.mcp_gateway import MCPCalendarGateway
-
 
 # ---------------------------------------------------------------------------
 # _parse_calendar_event

@@ -36,6 +36,7 @@ class StageController:
         self._enrichment: dict[str, list[DescriptionItem]] = {}
         self._drafts: list[FinalEventDraft] = []
         self._session: RunSession | None = None
+        self._creation_results: list[dict] = []
 
         self._original_drafts: list[FinalEventDraft] = []
 
@@ -101,6 +102,15 @@ class StageController:
 
     def set_current_stage(self, stage: int) -> None:
         self.current_stage = max(0, min(5, stage))
+
+    def add_creation_result(self, result: dict) -> None:
+        self._creation_results.append(result)
+
+    def get_creation_results(self) -> list[dict]:
+        return list(self._creation_results)
+
+    def clear_creation_results(self) -> None:
+        self._creation_results = []
 
     def prev_stage(self) -> None:
         self.current_stage = max(0, self.current_stage - 1)
@@ -211,6 +221,17 @@ class StageController:
             )
 
         session.stages = [StageState.from_dict(s.to_dict()) for s in self.stages]
+
+        if self._creation_results:
+            storage.save_artifact(
+                session.session_id,
+                "creation_results.json",
+                self._creation_results,
+            )
+            session.creation_results_json = json.dumps(
+                self._creation_results, ensure_ascii=False, default=str,
+            )
+
         storage.save_session(session)
         self._session = session
         return session
@@ -269,6 +290,9 @@ class StageController:
             self._original_drafts = [
                 FinalEventDraft.from_dict(d.to_dict()) for d in self._drafts
             ]
+
+        if session.creation_results_json:
+            self._creation_results = json.loads(session.creation_results_json)
 
         return session
 

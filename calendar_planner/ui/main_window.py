@@ -551,13 +551,19 @@ class MainWindow:
                 messagebox.showwarning("Ошибка", "Контейнер не инициализирован")
                 return
 
-            from tkinter import messagebox
-
             from calendar_planner.calendar.creator import EventCreator
+            from calendar_planner.calendar.mcp_gateway import MCPCalendarGateway
 
             calendar_gw = self.container.get_calendar_gateway()
-            if isinstance(calendar_gw, self.container.__class__.__module__.split(".")[0]):
-                messagebox.showerror("Ошибка", "Реальное создание недоступно без MCP-подключения.")
+            if not isinstance(calendar_gw, MCPCalendarGateway):
+                messagebox.showerror(
+                    "Ошибка",
+                    "Реальное создание доступно только через MCP-подключение.\n"
+                    f"Текущий gateway: {type(calendar_gw).__name__}",
+                )
+                return
+            if not calendar_gw.is_available():
+                messagebox.showerror("Ошибка", "MCP-календарь недоступен.")
                 return
 
             # Recheck duplicate before real create
@@ -569,14 +575,43 @@ class MainWindow:
                 return
 
             creator = EventCreator(calendar_gw, dry_run=False)
-            result = creator.create_one(draft)
-            payload = creator.build_payload(draft)
 
-            # Save to session
-            if hasattr(self.controller, '_creation_results'):
-                self.controller._creation_results.append(result)
-            else:
-                self.controller._creation_results = [result]
+            # Build and validate payload BEFORE creating
+            payload = creator.build_payload(draft)
+            payload_errors = creator.validate_payload(payload)
+
+            if payload_errors:
+                messagebox.showerror(
+                    "Ошибки payload",
+                    "Невозможно создать событие — payload содержит ошибки:\n\n"
+                    + "\n".join(f"• {e}" for e in payload_errors),
+                )
+                return
+
+            import json
+            payload_preview = json.dumps(payload, ensure_ascii=False, indent=2)
+            if not messagebox.askyesno(
+                "Подтверждение создания — предпросмотр",
+                f"Будет создано реальное календарное событие:\n\n"
+                f"Тема: {payload.get('subject', '—')}\n"
+                f"Начало: {payload['start'].get('dateTime', '—')} ({payload['start'].get('timeZone', '—')})\n"
+                f"Окончание: {payload.get('end', {}).get('dateTime', '—')}\n"
+                f"Участников: {len(payload.get('attendees', []))}\n"
+                f"Место: {payload.get('location', '—')}\n"
+                f"Ссылка: {payload.get('online_meeting_url', '—')}\n\n"
+                f"--- JSON payload ---\n{payload_preview}\n\n"
+                f"Создать событие?",
+            ):
+                return
+
+            result = creator.create_one(draft)
+            result["payload"] = payload
+            import datetime as dt
+            result["created_at"] = dt.datetime.now(dt.UTC).isoformat()
+
+            # Save to session controller
+            if hasattr(self.controller, 'add_creation_result'):
+                self.controller.add_creation_result(result)
 
             frame_obj = frame if frame is not None else self._stage_frames.get(5)
             if frame_obj is not None:

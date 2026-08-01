@@ -35,11 +35,43 @@ jobs:
       - name: Test package install
         run: |
           pip install -e .
-          calendar-planner --help || true
+          calendar-planner --help
 
       - name: Run tests with coverage
         run: |
           xvfb-run -a python -m pytest tests/ -v --cov=calendar_planner --cov-report=xml --cov-report=term-missing --cov-fail-under=75
+
+      - name: Check per-module coverage thresholds
+        run: |
+          python -c "
+          import json, sys
+          with open('coverage.xml') as f:
+              import xml.etree.ElementTree as ET
+              root = ET.parse(f).getroot()
+          modules = {}
+          for pkg in root.findall('.//package'):
+              for cls in pkg.findall('.//class'):
+                  fname = cls.get('filename')
+                  lines = int(cls.get('line-rate', '1.0').split('/')[0] if '/' in cls.get('line-rate','1.0') else cls.get('line-rate','1.0'))
+                  covered = len([l for l in cls.findall('.//line') if l.get('hits', '0') != '0'])
+                  total = len(cls.findall('.//line'))
+                  if total == 0: total = 1
+                  pct = covered/total if total else 1.0
+                  modules[fname] = pct
+          thresholds = {
+              'calendar_planner/app/mcp_transport.py': 0.80,
+              'calendar_planner/calendar/mcp_gateway.py': 0.80,
+              'calendar_planner/calendar/creator.py': 0.90,
+          }
+          ok = True
+          for mod, threshold in thresholds.items():
+              actual = modules.get(mod, 0.0)
+              status = 'PASS' if actual >= threshold else 'FAIL'
+              print(f'{status}: {mod} = {actual:.0%} (threshold {threshold:.0%})')
+              if actual < threshold:
+                  ok = False
+          sys.exit(0 if ok else 1)
+          "
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -58,3 +90,14 @@ jobs:
         run: pip install ruff
       - name: Lint
         run: ruff check calendar_planner/ tests/
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run BAT help smoke test
+        shell: cmd
+        run: run_calendar_planner.bat --help

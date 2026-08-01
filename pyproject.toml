@@ -60,7 +60,6 @@ ignore = [
     "FURB162", # fromisoformat-replace-z — стилистическая рекомендация
     "FLY002",  # static-join-to-f-string — стилистическая рекомендация
     "F841",    # unused-variable — допустимо в тестах для читаемости
-    "F823",    # undefined-local — допустимо в callback scope
     "G201",    # logging-exc-info — стилистическая рекомендация
     "PERF102", # incorrect-dict-iterator — стилистическая рекомендация
 ]

@@ -27,6 +27,32 @@ def main() -> None:
     project_root = Path(__file__).parent.parent.parent
     sys.path.insert(0, str(project_root))
 
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print("Calendar Event Planner v2")
+        print()
+        print("Usage: calendar-planner [OPTIONS]")
+        print()
+        print("Опции:")
+        print("  --help, -h       Показать эту справку")
+        print("  --cli            Запустить CLI-режим")
+        print("  --version        Показать версию")
+        print()
+        print("CLI команды: python -m calendar_planner.cli <command>")
+        print("  check-connections")
+        print("  analyze --source=<path>")
+        print("  compare --session=<id>")
+        print("  resolve-participants --session=<id>")
+        print("  enrich --session=<id>")
+        print("  preview --session=<id>")
+        print("  create --session=<id> --draft-id=<id> --confirm-create")
+        print()
+        print("Запуск в Windows: run_calendar_planner.bat")
+        return
+
+    if "--version" in sys.argv:
+        print("calendar-event-planner-v2 1.0.0")
+        return
+
     from calendar_planner.app.container import AppContainer
     from calendar_planner.app.settings import settings
 
