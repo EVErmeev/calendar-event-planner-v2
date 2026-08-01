@@ -6,6 +6,16 @@ import tkinter as tk
 from pathlib import Path
 
 
+def configure_console_encoding() -> None:
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def load_env_file() -> None:
     env_path = Path(__file__).parent.parent.parent / ".env"
     if env_path.exists():
@@ -22,6 +32,7 @@ def load_env_file() -> None:
 
 
 def main() -> None:
+    configure_console_encoding()
     load_env_file()
 
     project_root = Path(__file__).parent.parent.parent
@@ -36,6 +47,7 @@ def main() -> None:
         print("  --help, -h       Показать эту справку")
         print("  --cli            Запустить CLI-режим")
         print("  --version        Показать версию")
+        print("  --smoke-gui      Проверить запуск GUI без реальной работы")
         print()
         print("CLI команды: python -m calendar_planner.cli <command>")
         print("  check-connections")
@@ -51,6 +63,10 @@ def main() -> None:
 
     if "--version" in sys.argv:
         print("calendar-event-planner-v2 1.0.0")
+        return
+
+    if "--smoke-gui" in sys.argv:
+        _smoke_gui()
         return
 
     from calendar_planner.app.container import AppContainer
@@ -71,6 +87,25 @@ def main() -> None:
     root = tk.Tk()
     _app = MainWindow(root, container=container)
     root.mainloop()
+
+
+def _smoke_gui() -> None:
+    """Smoke test GUI — creates window, verifies it works, closes without real operations."""
+    from calendar_planner.app.container import AppContainer
+    from calendar_planner.app.settings import settings
+    from calendar_planner.ui.main_window import MainWindow
+
+    os.environ["APP_ENV"] = "test"
+    os.environ["MCP_ENABLED"] = "false"
+
+    container = AppContainer(settings)
+    root = tk.Tk()
+    root.title("Calendar Event Planner v2 — SMOKE TEST")
+    app = MainWindow(root, container=container)
+    root.update_idletasks()
+    root.update()
+    root.destroy()
+    print("GUI smoke test: OK")
 
 
 if __name__ == "__main__":

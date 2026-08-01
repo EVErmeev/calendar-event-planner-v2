@@ -94,13 +94,24 @@ calendar_planner/
 Двойной клик по `run_calendar_planner.bat` в корне проекта.
 
 Требования:
-- Python 3.11+
+- Python 3.11+ (установщик: https://www.python.org/downloads/)
 - При первом запуске автоматически создаётся `.venv` и устанавливаются зависимости
+- При ошибке окно остаётся открытым, подробности в `logs\launcher.log`
 
 ```bat
-run_calendar_planner.bat           # запуск программы
-run_calendar_planner.bat --help    # справка
+run_calendar_planner.bat              # запуск GUI
+run_calendar_planner.bat --help       # справка
+run_calendar_planner.bat --version    # версия
+run_calendar_planner.bat --smoke-gui  # проверка GUI без реальной работы
 ```
+
+Для чистой переустановки:
+```bat
+rmdir /s /q .venv
+run_calendar_planner.bat
+```
+
+Токены и настройки MCP задаются через `.env` или переменные среды, не внутри BAT.
 
 Токены и настройки MCP задаются через `.env` или переменные среды, не внутри BAT.
 4. Распознавание неструктурированного текста упрощённое — рекомендуется для структурированных таблиц
