@@ -144,18 +144,19 @@ class TestResolveOnePerson:
             gw = EWSDirectoryGateway(username="user", password="pass")
             result = gw.search("Иванов")
 
-        assert result["status"] == "success"
-        assert result["source"] == "exchange_ews_gal"
-        assert len(result["people"]) == 1
-        person = result["people"][0]
-        assert person["full_name"] == "Иванов Иван Иванович"
-        assert person["email"] == "ivanov@1cbit.ru"
-        assert person["mailbox_type"] == "Mailbox"
-        assert person["company"] == "1С:БИТ"
-        assert person["department"] == "Разработка"
-        assert person["job_title"] == "Ведущий разработчик"
-        assert result["error"] is None
-        assert result["correlation_id"] is not None
+        assert result.status == "success"
+        assert result.source == "exchange_ews_gal"
+        assert len(result.people) == 1
+        person = result.people[0]
+        assert person.display_name == "Иванов Иван Иванович"
+        assert person.full_name == "Иванов Иван Иванович"
+        assert person.email == "ivanov@1cbit.ru"
+        assert person.mailbox_type == "Mailbox"
+        assert person.company == "1С:БИТ"
+        assert person.department == "Разработка"
+        assert person.job_title == "Ведущий разработчик"
+        assert result.error_message is None
+        assert result.correlation_id is not None
 
         mock_post.assert_called_once()
         call_kwargs = mock_post.call_args.kwargs
@@ -167,7 +168,7 @@ class TestResolveOnePerson:
         with mock.patch("requests.post", return_value=fake_resp):
             gw = EWSDirectoryGateway(username="user", password="pass")
             result = gw.search("Иванов")
-        assert result["status"] == "success"
+        assert result.status == "success"
 
 
 class TestResolveZeroPeople:
@@ -177,9 +178,9 @@ class TestResolveZeroPeople:
             gw = EWSDirectoryGateway(username="user", password="pass")
             result = gw.search("Неизвестный")
 
-        assert result["status"] == "not_found"
-        assert len(result["people"]) == 0
-        assert result["error"] is None
+        assert result.status == "not_found"
+        assert len(result.people) == 0
+        assert result.error_message is None
 
 
 class TestResolveAmbiguous:
@@ -189,10 +190,10 @@ class TestResolveAmbiguous:
             gw = EWSDirectoryGateway(username="user", password="pass")
             result = gw.search("Иванов")
 
-        assert result["status"] == "ambiguous"
-        assert len(result["people"]) == 2
-        assert result["people"][0]["full_name"] == "Иванов Иван"
-        assert result["people"][1]["full_name"] == "Иванов Петр"
+        assert result.status == "ambiguous"
+        assert len(result.people) == 2
+        assert result.people[0].display_name == "Иванов Иван"
+        assert result.people[1].display_name == "Иванов Петр"
 
 
 class TestAuthFailed:
@@ -202,9 +203,9 @@ class TestAuthFailed:
             gw = EWSDirectoryGateway(username="user", password="pass")
             result = gw.search("Иванов")
 
-        assert result["status"] == "auth_failed"
-        assert len(result["people"]) == 0
-        assert "401" in result["error"]
+        assert result.status == "auth_failed"
+        assert len(result.people) == 0
+        assert "401" in result.error_message
 
 
 class TestTimeout:
@@ -218,9 +219,9 @@ class TestTimeout:
             gw = EWSDirectoryGateway(username="user", password="pass", timeout=5)
             result = gw.search("Иванов")
 
-        assert result["status"] == "timeout"
-        assert len(result["people"]) == 0
-        assert "5s" in result["error"]
+        assert result.status == "timeout"
+        assert len(result.people) == 0
+        assert "5s" in result.error_message
 
 
 class TestXMLParseError:
@@ -230,8 +231,8 @@ class TestXMLParseError:
             gw = EWSDirectoryGateway(username="user", password="pass")
             result = gw.search("Иванов")
 
-        assert result["status"] == "failed"
-        assert "XML parse error" in result["error"]
+        assert result.status == "failed"
+        assert "XML parse error" in result.error_message
 
     def test_no_resolution_set_element_returns_failed(self):
         resp_text = (
@@ -247,8 +248,8 @@ class TestXMLParseError:
             gw = EWSDirectoryGateway(username="user", password="pass")
             result = gw.search("Иванов")
 
-        assert result["status"] == "failed"
-        assert "ResolutionSet" in result["error"]
+        assert result.status == "failed"
+        assert "ResolutionSet" in result.error_message
 
 
 class TestGatewayNotConfigured:
@@ -256,14 +257,14 @@ class TestGatewayNotConfigured:
         gw = EWSDirectoryGateway(username=None, password=None)
         result = gw.search("Иванов")
 
-        assert result["status"] == "failed"
-        assert "not configured" in result["error"]
+        assert result.status == "failed"
+        assert "not configured" in result.error_message
 
     def test_no_endpoint_returns_failed(self):
         gw = EWSDirectoryGateway(endpoint="", username="user", password="pass")
         result = gw.search("Иванов")
 
-        assert result["status"] == "failed"
+        assert result.status == "failed"
 
     def test_not_available_returns_false(self):
         gw = EWSDirectoryGateway(username=None)
@@ -351,8 +352,8 @@ class TestConnectionError:
             gw = EWSDirectoryGateway(username="user", password="pass")
             result = gw.search("Иванов")
 
-        assert result["status"] == "failed"
-        assert "Refused" in result["error"]
+        assert result.status == "failed"
+        assert "Refused" in result.error_message
 
 
 class TestLimit:
@@ -362,7 +363,7 @@ class TestLimit:
             gw = EWSDirectoryGateway(username="user", password="pass")
             result = gw.search("Иванов", limit=1)
 
-        assert len(result["people"]) == 1
+        assert len(result.people) == 1
 
 
 class TestNTLMAuthUsed:

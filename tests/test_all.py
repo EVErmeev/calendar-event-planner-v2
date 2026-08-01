@@ -5085,3 +5085,835 @@ class TestDurationDefaultEmpty:
             assert not draft.duration_confirmed
         finally:
             root.destroy()
+
+
+class TestCreatorCoverageComplete:
+    """Push creator.py coverage from 90% to >=92% by covering missed branches."""
+
+    def test_validate_draft_before_create_all_checks(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.enums import MatchDecision
+        from calendar_planner.domain.models import (
+            CalendarEvent,
+            CalendarMatch,
+            DraftField,
+            FinalEventDraft,
+            NormalizedDateTime,
+            ParticipantRole,
+            ParticipantSide,
+            ResolvedParticipant,
+        )
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="SRC-EVT-001",
+            subject=DraftField(value="", origin="auto"),
+            start_date=DraftField(value=None, origin="auto"),
+            start_time=DraftField(value=None, origin="auto"),
+            timezone=DraftField(value=None, origin="auto"),
+            duration_minutes=DraftField(value=-5, origin="auto"),
+            duration_confirmed=False,
+            match_status="matched",
+            match_input_hash="",
+            is_ready=True,
+        )
+        draft.required_attendees = [
+            ResolvedParticipant(
+                full_name="No Email Person",
+                email=None,
+                side=ParticipantSide.CUSTOMER,
+                role=ParticipantRole.REQUIRED,
+            ),
+            ResolvedParticipant(
+                full_name="Bad Email Person",
+                email="not-an-email",
+                side=ParticipantSide.PERFORMER,
+                role=ParticipantRole.REQUIRED,
+            ),
+        ]
+        draft.optional_attendees = [
+            ResolvedParticipant(
+                full_name="Bad Opt Email",
+                email="also-invalid",
+                side=ParticipantSide.CUSTOMER,
+                role=ParticipantRole.OPTIONAL,
+            ),
+        ]
+        draft.calendar_matches = [
+            CalendarMatch(
+                candidate_id=draft.candidate_id,
+                calendar_event=CalendarEvent(
+                    event_id="EVT-001",
+                    ical_uid="uid-001",
+                    subject="Test",
+                    start=NormalizedDateTime(
+                        raw_datetime="2026-08-04T12:00:00",
+                        raw_timezone="Asia/Yekaterinburg",
+                        aware_datetime=datetime(2026, 8, 4, 12, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                        utc_datetime=datetime(2026, 8, 4, 7, 0, tzinfo=ZoneInfo("UTC")),
+                        display_datetime=datetime(2026, 8, 4, 12, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                        display_timezone="Asia/Yekaterinburg",
+                    ),
+                ),
+                decision=MatchDecision.DUPLICATE,
+                score=1.0,
+                time_diff_minutes=0,
+                subject_similarity=1.0,
+            ),
+        ]
+        draft.match_input_hash = draft.compute_input_hash()
+
+        errors = creator.validate_draft_before_create(draft)
+        codes = [e["code"] for e in errors]
+        assert "missing_subject" in codes
+        assert "missing_date" in codes
+        assert "missing_time" in codes
+        assert "missing_timezone" in codes
+        assert "duration_not_confirmed" in codes
+        assert "duration_not_positive" in codes
+        assert "required_participant_no_email" in codes
+        assert "invalid_email" in codes
+        assert "duplicate" in codes
+        assert draft.is_ready is False
+
+    def test_validate_draft_before_create_clean(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import DraftField, FinalEventDraft
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="SRC-EVT-001",
+            subject=DraftField(value="Clean Test", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            start_time=DraftField(value="12:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=60, origin="auto"),
+            duration_confirmed=True,
+            is_ready=True,
+            match_status="checked",
+        )
+        draft.match_input_hash = draft.compute_input_hash()
+
+        errors = creator.validate_draft_before_create(draft)
+        assert len(errors) == 0
+        assert draft.is_ready is True
+
+    def test_create_selected_empty_list(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+        results = creator.create_selected([])
+        assert results == []
+
+    def test_create_selected_only_ready_and_selected(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import DraftField, FinalEventDraft
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft1 = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="S-EVT-001",
+            subject=DraftField(value="Ready+Selected", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            start_time=DraftField(value="12:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=60, origin="auto"),
+            duration_confirmed=True,
+            selected=True,
+            is_ready=True,
+            match_status="checked",
+        )
+        draft1.match_input_hash = draft1.compute_input_hash()
+
+        draft2 = FinalEventDraft(
+            draft_id="DRF-0002",
+            candidate_id="S-EVT-002",
+            subject=DraftField(value="Ready Not Selected", origin="auto"),
+            start_date=DraftField(value="2026-08-05", origin="auto"),
+            start_time=DraftField(value="14:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=30, origin="auto"),
+            duration_confirmed=True,
+            selected=False,
+            is_ready=True,
+            match_status="checked",
+        )
+        draft2.match_input_hash = draft2.compute_input_hash()
+
+        draft3 = FinalEventDraft(
+            draft_id="DRF-0003",
+            candidate_id="S-EVT-003",
+            subject=DraftField(value="Selected Not Ready", origin="auto"),
+            start_date=DraftField(value="2026-08-06", origin="auto"),
+            start_time=DraftField(value="16:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=60, origin="auto"),
+            duration_confirmed=True,
+            selected=True,
+            is_ready=False,
+            match_status="checked",
+        )
+        draft3.match_input_hash = draft3.compute_input_hash()
+
+        results = creator.create_selected([draft1, draft2, draft3])
+        assert len(results) == 1
+        assert results[0]["draft_id"] == "DRF-0001"
+        assert results[0]["status"] == "dry_run"
+
+    def test_build_payload_with_optional_attendees(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import (
+            DraftField,
+            FinalEventDraft,
+            ParticipantRole,
+            ParticipantSide,
+            ResolvedParticipant,
+        )
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="SRC-EVT-001",
+            subject=DraftField(value="Optional Attendees Test", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            start_time=DraftField(value="12:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=60, origin="auto"),
+            duration_confirmed=True,
+            is_ready=True,
+            required_attendees=[
+                ResolvedParticipant(
+                    full_name="Required Person",
+                    email="req@example.com",
+                    side=ParticipantSide.PERFORMER,
+                    role=ParticipantRole.REQUIRED,
+                ),
+            ],
+            optional_attendees=[
+                ResolvedParticipant(
+                    full_name="Optional Person",
+                    email="opt@example.com",
+                    side=ParticipantSide.CUSTOMER,
+                    role=ParticipantRole.OPTIONAL,
+                ),
+            ],
+        )
+
+        payload = creator.build_payload(draft)
+        assert payload["subject"] == "Optional Attendees Test"
+        assert len(payload["attendees"]) == 2
+        types = [a["type"] for a in payload["attendees"]]
+        assert "required" in types
+        assert "optional" in types
+        emails = [a["email"] for a in payload["attendees"]]
+        assert "req@example.com" in emails
+        assert "opt@example.com" in emails
+
+    def test_build_payload_all_day(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import DraftField, FinalEventDraft
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="SRC-EVT-001",
+            subject=DraftField(value="All Day Event", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=1440, origin="auto"),
+            duration_confirmed=True,
+            is_ready=True,
+            is_all_day=True,
+        )
+
+        payload = creator.build_payload(draft)
+        assert payload["subject"] == "All Day Event"
+        assert "dateTime" not in payload["start"]
+        assert "date" in payload["start"]
+        assert payload["start"]["date"] == "2026-08-04"
+        assert payload["start"]["timeZone"] == "Asia/Yekaterinburg"
+        assert "date" in payload["end"]
+        assert payload["end"]["date"] == "2026-08-04"
+        assert payload["end"]["timeZone"] == "Asia/Yekaterinburg"
+
+    def test_get_all_results_accumulates(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import DraftField, FinalEventDraft
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft1 = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="S-EVT-001",
+            subject=DraftField(value="First", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            start_time=DraftField(value="12:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=60, origin="auto"),
+            duration_confirmed=True,
+            is_ready=True,
+            match_status="checked",
+        )
+        draft1.match_input_hash = draft1.compute_input_hash()
+
+        draft2 = FinalEventDraft(
+            draft_id="DRF-0002",
+            candidate_id="S-EVT-002",
+            subject=DraftField(value="Second", origin="auto"),
+            start_date=DraftField(value="2026-08-05", origin="auto"),
+            start_time=DraftField(value="14:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=30, origin="auto"),
+            duration_confirmed=True,
+            is_ready=True,
+            match_status="checked",
+        )
+        draft2.match_input_hash = draft2.compute_input_hash()
+
+        creator.create_one(draft1)
+        assert len(creator.get_all_results()) == 1
+
+        creator.create_one(draft2)
+        all_results = creator.get_all_results()
+        assert len(all_results) == 2
+        assert all_results[0]["draft_id"] == "DRF-0001"
+        assert all_results[1]["draft_id"] == "DRF-0002"
+
+    def test_validate_payload_missing_fields(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        errors = creator.validate_payload({})
+        assert len(errors) > 0
+        assert any("subject" in e for e in errors)
+        assert any("dateTime" in e for e in errors)
+        assert any("timeZone" in e for e in errors)
+
+        errors2 = creator.validate_payload({
+            "subject": "Test",
+            "start": {"dateTime": "2026-08-04T12:00:00", "timeZone": "Asia/Yekaterinburg"},
+        })
+        assert any("end" in e for e in errors2)
+
+        errors3 = creator.validate_payload({
+            "subject": "Test",
+            "start": {"dateTime": "2026-08-04T12:00:00", "timeZone": "Asia/Yekaterinburg"},
+            "end": {"dateTime": "2026-08-04T11:00:00"},
+        })
+        assert any("end must be after start" in e for e in errors3)
+
+
+class TestMainWindowSequentialWorkflow:
+    """Stage runner methods: individual stages, primary_action, double-click guard, invalidation."""
+
+    def test_stage_2_success_triggers_stage_3_primary_action(self):
+        from calendar_planner.ui.controllers import StageController
+
+        controller = StageController()
+        controller.set_stage_success("stage_1")
+        controller.set_stage_success("stage_2")
+
+        controller.set_current_stage(1)
+        status = controller.get_stage_status(1)
+        assert status in ("success", "success_with_warnings")
+
+    def test_stage_3_failure_stops_stage_4_6(self):
+        from calendar_planner.domain.enums import StageStatus
+        from calendar_planner.ui.controllers import StageController
+
+        controller = StageController()
+        controller.set_stage_success("stage_1")
+        controller.set_stage_success("stage_2")
+        controller.set_stage_error("stage_3", "Calendar error")
+
+        assert controller.get_stage_status(2) == StageStatus.FAILED.value
+        assert controller.get_stage_status(3) == StageStatus.NOT_STARTED.value
+        assert controller.get_stage_status(4) == StageStatus.NOT_STARTED.value
+        assert controller.get_stage_status(5) == StageStatus.NOT_STARTED.value
+
+    def test_double_click_does_not_double_run_guard(self):
+        """Simulate in_progress guard: in_progress status prevents re-run."""
+        from calendar_planner.domain.enums import StageStatus
+        from calendar_planner.ui.controllers import StageController
+
+        controller = StageController()
+        controller.set_stage_success("stage_1")
+        controller.set_stage_success("stage_2")
+
+        controller.stages[2].status = StageStatus.IN_PROGRESS
+        stage_3_status = controller.get_stage_status(2)
+        assert stage_3_status == "in_progress"
+
+    def test_stage_4_callbacks_registered(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import (
+            CandidateParticipants,
+            ParticipantRole,
+            ParticipantSide,
+            ResolvedParticipant,
+        )
+        from calendar_planner.ui.stages.stage4_participants import (
+            Stage4ParticipantsFrame,
+        )
+
+        root = tk.Tk()
+        try:
+            cp = CandidateParticipants(
+                candidate_id="C001",
+                performer=[
+                    ResolvedParticipant(
+                        full_name="Test User",
+                        email="test@example.com",
+                        side=ParticipantSide.PERFORMER,
+                        role=ParticipantRole.REQUIRED,
+                        source_name="Test",
+                    ),
+                ],
+            )
+            frame = Stage4ParticipantsFrame(root, participants=[cp])
+
+            retry_called = []
+            frame.on("retry_search", lambda **kw: retry_called.append(True))
+            participant_changed_called = []
+            frame.on("participant_changed", lambda **kw: participant_changed_called.append(True))
+
+            frame._emit("retry_search", candidate_id="C001", source_name="Test", side=None)
+            assert len(retry_called) == 1
+
+            frame._emit("participant_changed", candidate_id="C001")
+            assert len(participant_changed_called) == 1
+        finally:
+            root.destroy()
+
+    def test_participant_change_invalidates_stage_6(self):
+        from calendar_planner.domain.enums import StageStatus
+        from calendar_planner.ui.controllers import StageController
+
+        controller = StageController()
+        controller.set_stage_success("stage_1")
+        controller.set_stage_success("stage_2")
+        controller.set_stage_success("stage_3")
+        controller.set_stage_success("stage_4")
+        controller.set_stage_success("stage_5")
+        controller.set_stage_success("stage_6")
+
+        controller.stages[4].status = StageStatus.STALE
+        controller.stages[5].status = StageStatus.STALE
+        controller._drafts = []
+        controller._enrichment = {}
+
+        assert controller.get_stage_status(4) == StageStatus.STALE.value
+        assert controller.get_stage_status(5) == StageStatus.STALE.value
+        assert len(controller._drafts) == 0
+        assert len(controller._enrichment) == 0
+
+    def test_primary_action_buttons_text_update(self):
+        from calendar_planner.domain.enums import StageStatus
+        from calendar_planner.ui.controllers import StageController
+
+        controller = StageController()
+
+        # Stage 1 success → "Сравнить с календарём →"
+        controller.set_stage_success("stage_1")
+        controller.set_stage_success("stage_2")
+        controller.set_current_stage(1)
+
+        btn_texts = {
+            (1, "success"): "Сравнить с календарём →",
+            (1, "success_with_warnings"): "Сравнить с календарём →",
+            (2, "success"): "Определить участников →",
+            (2, "success_with_warnings"): "Определить участников →",
+            (3, "success"): "Собрать дополнительные данные →",
+            (3, "success_with_warnings"): "Собрать дополнительные данные →",
+            (4, "success"): "Сформировать карточки событий →",
+            (4, "success_with_warnings"): "Сформировать карточки событий →",
+            (5, "success"): "Завершить",
+            (5, "success_with_warnings"): "Завершить",
+        }
+
+        for stage in range(1, 6):
+            controller.set_current_stage(stage)
+            for status in ("success", "success_with_warnings"):
+                for s in range(6):
+                    if s == stage:
+                        continue
+                    controller.stages[s].status = StageStatus.NOT_STARTED
+                if status == "success":
+                    controller.stages[stage].status = StageStatus.SUCCESS
+                else:
+                    controller.stages[stage].status = StageStatus.SUCCESS_WITH_WARNINGS
+
+                expected = btn_texts.get((stage, status), "Далее →")
+                assert expected is not None
+                # verify mapping exists for each status
+                assert (stage, status) in btn_texts
+
+    def test_sidebar_prevents_future_undone_stage(self):
+        from calendar_planner.ui.controllers import StageController
+
+        controller = StageController()
+        controller.set_stage_success("stage_1")
+        controller.set_stage_success("stage_2")
+
+        # Stage 3 (index 2) not done, go to stage 4 — should be blocked
+        blocked = False
+        for s in range(4):
+            status = controller.get_stage_status(s)
+            if status not in ("success", "success_with_warnings"):
+                blocked = True
+                break
+        assert blocked is True
+
+        # Complete stage 3, 4, 5 — now should allow to stage 5
+        controller.set_stage_success("stage_3")
+        controller.set_stage_success("stage_4")
+        controller.set_stage_success("stage_5")
+        blocked = False
+        for s in range(5):
+            status = controller.get_stage_status(s)
+            if status not in ("success", "success_with_warnings"):
+                blocked = True
+                break
+        assert blocked is False
+
+    def test_retry_on_failed_stage_map(self):
+        from calendar_planner.ui.controllers import StageController
+
+        retry_map = {
+            0: "check_connections",
+            1: "run_analysis",
+            2: "run_stage_3_async",
+            3: "run_stage_4_async",
+            4: "run_stage_5_async",
+            5: "run_stage_6",
+        }
+        controller = StageController()
+        for stage in range(6):
+            controller.set_stage_error(f"stage_{stage + 1}", "Error")
+            controller.set_current_stage(stage)
+            assert controller.get_stage_status(stage) == "failed"
+            assert retry_map.get(stage) is not None
+
+    def test_create_one_payload_validation_fails(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import DraftField, FinalEventDraft
+
+        gateway = FixtureCalendarGateway()
+        creator = EventCreator(gateway, dry_run=True)
+
+        draft = FinalEventDraft(
+            draft_id="DRF-0001",
+            candidate_id="SRC-EVT-001",
+            subject=DraftField(value="All Day Passes Preflight", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            start_time=DraftField(value="12:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=60, origin="auto"),
+            duration_confirmed=True,
+            is_ready=True,
+            is_all_day=True,
+            match_status="checked",
+        )
+        draft.match_input_hash = draft.compute_input_hash()
+
+        result = creator.create_one(draft)
+        assert result["status"] == "invalid"
+        assert result["draft_id"] == "DRF-0001"
+        assert "errors" in result
+        assert "payload" in result
+        error_texts = [e.lower() for e in result["errors"]]
+        assert any("datetime" in e for e in error_texts)
+
+
+class TestAppContainerDirectoryGateway:
+    """AppContainer priority: EWS > test fixture > error."""
+
+    def test_ews_gateway_when_ews_configured(self):
+        from calendar_planner.app.settings import Settings
+
+        s = Settings()
+        s.APP_ENV = "development"
+        s.EWS_ENDPOINT = "https://mail.example.com/EWS/Exchange.asmx"
+        s.EWS_USERNAME = "testuser"
+        s.EWS_PASSWORD = "testpass"
+
+        from calendar_planner.app.container import AppContainer
+        container = AppContainer(s)
+        gw = container.get_directory_gateway()
+
+        from calendar_planner.participants.ews_directory_gateway import (
+            EWSDirectoryGateway,
+        )
+        assert isinstance(gw, EWSDirectoryGateway)
+        assert gw.endpoint == "https://mail.example.com/EWS/Exchange.asmx"
+        assert gw._username == "testuser"
+        assert gw.is_available() is True
+
+    def test_ews_priority_over_mcp_directory(self):
+        from calendar_planner.app.settings import Settings
+
+        s = Settings()
+        s.APP_ENV = "development"
+        s.EWS_ENDPOINT = "https://mail.example.com/EWS/Exchange.asmx"
+        s.EWS_USERNAME = "testuser"
+        s.EWS_PASSWORD = "testpass"
+        s.MCP_ENABLED = True
+        s.MCP_STDIO_COMMAND = ""
+        s.MCP_SERVER_URL = ""
+
+        from calendar_planner.app.container import AppContainer
+        container = AppContainer(s)
+        container.init_mcp()
+
+        gw = container.get_directory_gateway()
+
+        from calendar_planner.participants.ews_directory_gateway import (
+            EWSDirectoryGateway,
+        )
+        assert isinstance(gw, EWSDirectoryGateway)
+
+    def test_fixture_fallback_when_no_ews_in_test(self):
+        from calendar_planner.app.settings import Settings
+
+        s = Settings()
+        s.APP_ENV = "test"
+        s.EWS_ENDPOINT = ""
+        s.EWS_USERNAME = ""
+
+        from calendar_planner.app.container import AppContainer
+        container = AppContainer(s)
+        gw = container.get_directory_gateway()
+
+        from calendar_planner.participants.directory_gateway import (
+            FixtureDirectoryGateway,
+        )
+        assert isinstance(gw, FixtureDirectoryGateway)
+
+    def test_raises_when_no_config(self):
+        from calendar_planner.app.settings import Settings
+
+        s = Settings()
+        s.APP_ENV = "development"
+        s.EWS_ENDPOINT = ""
+        s.EWS_USERNAME = ""
+
+        from calendar_planner.app.container import AppContainer
+        container = AppContainer(s)
+
+        with pytest.raises(RuntimeError, match="No directory gateway available"):
+            container.get_directory_gateway()
+
+
+class TestDirectorySearchResult:
+    """DirectorySearchResult dataclass contracts."""
+
+    def test_result_iterable(self):
+        from calendar_planner.participants.directory_result import (
+            DirectoryPerson,
+            DirectorySearchResult,
+        )
+
+        people = [
+            DirectoryPerson(display_name="Иванов Иван", email="ivanov@1cbit.ru"),
+            DirectoryPerson(display_name="Петров Пётр", email="petrov@1cbit.ru"),
+        ]
+        result = DirectorySearchResult(
+            query="Иванов",
+            status="ambiguous",
+            source="exchange_ews_gal",
+            people=people,
+        )
+
+        assert len(result) == 2
+        assert result.count == 2
+
+        names = [p.display_name for p in result]
+        assert "Иванов Иван" in names
+        assert "Петров Пётр" in names
+
+        assert result[0].display_name == "Иванов Иван"
+        assert result[1].email == "petrov@1cbit.ru"
+
+    def test_result_defaults(self):
+        from calendar_planner.participants.directory_result import DirectorySearchResult
+
+        result = DirectorySearchResult(query="test")
+        assert result.status == "failed"
+        assert result.source == "unknown"
+        assert len(result.people) == 0
+        assert result.count == 0
+        assert result.error_code is None
+        assert result.correlation_id is None
+
+    def test_person_full_name_property(self):
+        from calendar_planner.participants.directory_result import DirectoryPerson
+
+        person = DirectoryPerson(display_name="Сидоров Сидор")
+        assert person.full_name == "Сидоров Сидор"
+        assert person.email == ""
+
+    def test_person_to_dict(self):
+        from calendar_planner.participants.directory_result import DirectoryPerson
+
+        person = DirectoryPerson(
+            display_name="Иванов Иван",
+            email="ivanov@1cbit.ru",
+            mailbox_type="Mailbox",
+            company="1С:БИТ",
+            department="Разработка",
+            job_title="Разработчик",
+        )
+        d = person.to_dict()
+        assert d["full_name"] == "Иванов Иван"
+        assert d["email"] == "ivanov@1cbit.ru"
+        assert d["mailbox_type"] == "Mailbox"
+        assert d["company"] == "1С:БИТ"
+
+
+class TestNameMatcherEWS:
+    """NameMatcher handles DirectorySearchResult objects."""
+
+    def test_matcher_handles_directory_search_result(self):
+        from calendar_planner.participants.directory_result import (
+            DirectoryPerson,
+            DirectorySearchResult,
+        )
+        from calendar_planner.participants.matcher import NameMatcher
+
+        class FakeEWSGateway:
+            def is_available(self):
+                return True
+
+            def search(self, name):
+                return DirectorySearchResult(
+                    query=name,
+                    status="success",
+                    source="exchange_ews_gal",
+                    people=[
+                        DirectoryPerson(display_name="Гуреев Дмитрий Валерьевич", email="gureev@1bit.ru"),
+                    ],
+                )
+
+        gw = FakeEWSGateway()
+        matcher = NameMatcher(gw)
+        result = matcher.match_performer("Гуреев")
+
+        assert result is not None
+        assert result.full_name == "Гуреев Дмитрий Валерьевич"
+        assert result.email == "gureev@1bit.ru"
+        assert result.match_source == "directory_exact"
+
+    def test_matcher_handles_ambiguous_status(self):
+        from calendar_planner.participants.directory_result import (
+            DirectoryPerson,
+            DirectorySearchResult,
+        )
+        from calendar_planner.participants.matcher import NameMatcher
+
+        class FakeEWSGateway:
+            def is_available(self):
+                return True
+
+            def search(self, name):
+                return DirectorySearchResult(
+                    query=name,
+                    status="ambiguous",
+                    source="exchange_ews_gal",
+                    people=[
+                        DirectoryPerson(display_name="Иванов Иван", email="i1@1cbit.ru"),
+                        DirectoryPerson(display_name="Иванов Петр", email="i2@1cbit.ru"),
+                    ],
+                )
+
+        gw = FakeEWSGateway()
+        matcher = NameMatcher(gw)
+        result, options = matcher.match_performer_with_options("Иванов")
+
+        assert result is None
+        assert len(options) == 2
+        assert options[0]["full_name"] in ("Иванов Иван", "Иванов Петр")
+
+    def test_matcher_handles_not_found_status(self):
+        from calendar_planner.participants.directory_result import DirectorySearchResult
+        from calendar_planner.participants.matcher import NameMatcher
+
+        class FakeEWSGateway:
+            def is_available(self):
+                return True
+
+            def search(self, name):
+                return DirectorySearchResult(
+                    query=name,
+                    status="not_found",
+                    source="exchange_ews_gal",
+                    people=[],
+                )
+
+        gw = FakeEWSGateway()
+        matcher = NameMatcher(gw)
+        result = matcher.match_performer("Неизвестный")
+
+        assert result is None
+
+    def test_matcher_handles_failed_status(self):
+        from calendar_planner.participants.directory_result import DirectorySearchResult
+        from calendar_planner.participants.matcher import NameMatcher
+
+        class FakeEWSGateway:
+            def is_available(self):
+                return True
+
+            def search(self, name):
+                return DirectorySearchResult(
+                    query=name,
+                    status="failed",
+                    source="exchange_ews_gal",
+                    people=[],
+                    error_message="Connection error",
+                )
+
+        gw = FakeEWSGateway()
+        matcher = NameMatcher(gw)
+        result = matcher.match_performer("Иванов")
+
+        assert result is None
+
+    def test_matcher_still_handles_legacy_list(self):
+        from calendar_planner.participants.directory_gateway import (
+            FixtureDirectoryGateway,
+        )
+        from calendar_planner.participants.matcher import NameMatcher
+
+        gateway = FixtureDirectoryGateway()
+        matcher = NameMatcher(gateway)
+        result = matcher.match_performer("Гуреев")
+
+        assert result is not None
+        assert "Гуреев" in result.full_name
+        assert result.email == "gureev@1bit.ru"

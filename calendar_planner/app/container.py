@@ -5,8 +5,6 @@ import logging
 from calendar_planner.app.mcp_transport import MCPTransport
 from calendar_planner.app.stdio_mcp_transport import StdioMCPTransport
 from calendar_planner.calendar.mcp_gateway import MCPCalendarGateway
-from calendar_planner.participants.directory_gateway import MCPDirectoryGateway
-from calendar_planner.participants.ews_directory_gateway import EWSDirectoryGateway
 
 logger = logging.getLogger(__name__)
 
@@ -70,11 +68,6 @@ class AppContainer:
                 create_tool=self.settings.MCP_CALENDAR_CREATE_TOOL,
             )
 
-            self._directory_gateway = MCPDirectoryGateway(
-                mcp_call_function=mcp_call,
-                search_tool=self.settings.MCP_DIRECTORY_SEARCH_TOOL,
-            )
-
             self._mcp_initialized = True
             self._mcp_disabled_or_unavailable = False
             return result
@@ -103,7 +96,10 @@ class AppContainer:
         if self._directory_gateway is not None:
             return self._directory_gateway
 
-        if self.settings.EWS_USERNAME and self.settings.EWS_ENDPOINT:
+        if self.settings.EWS_ENDPOINT and self.settings.EWS_USERNAME:
+            from calendar_planner.participants.ews_directory_gateway import (
+                EWSDirectoryGateway,
+            )
             self._directory_gateway = EWSDirectoryGateway(
                 endpoint=self.settings.EWS_ENDPOINT,
                 username=self.settings.EWS_USERNAME,
@@ -122,8 +118,8 @@ class AppContainer:
             return FixtureDirectoryGateway()
 
         raise RuntimeError(
-            "MCP not available — directory gateway is None and APP_ENV is not 'test'. "
-            "Ensure MCP is initialized before calling get_directory_gateway()."
+            "No directory gateway available. "
+            "Configure EWS_ENDPOINT + EWS_USERNAME or set APP_ENV=test."
         )
 
     def check_all_connections(self) -> dict:
@@ -148,20 +144,24 @@ class AppContainer:
             })
             required_ok = False
 
-        directory_gw = self._directory_gateway
+        try:
+            directory_gw = self.get_directory_gateway()
+        except RuntimeError:
+            directory_gw = None
+
         if directory_gw is not None:
             dir_available = directory_gw.is_available()
             dir_result = {
-                "component": "MCP Directory",
+                "component": "Directory",
                 "status": "success" if dir_available else "failed",
-                "message": "Directory service available" if dir_available else "Directory service unavailable",
+                "message": f"Directory ({directory_gw.get_capability()}) available" if dir_available else "Directory service unavailable",
             }
             results.append(dir_result)
             if not dir_available:
                 required_ok = False
         else:
             results.append({
-                "component": "MCP Directory",
+                "component": "Directory",
                 "status": "warning",
                 "message": "Directory gateway not initialized",
             })

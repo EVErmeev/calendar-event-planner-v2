@@ -140,8 +140,10 @@ class MainWindow:
         bottom = ttk.Frame(self.root, padding=5)
         bottom.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
 
-        ttk.Button(bottom, text="← Назад", command=self._prev_stage).pack(side=tk.LEFT, padx=2)
-        ttk.Button(bottom, text="Далее →", command=self._next_stage).pack(side=tk.LEFT, padx=2)
+        self._bottom_back_btn = ttk.Button(bottom, text="← Назад", command=self._prev_stage)
+        self._bottom_back_btn.pack(side=tk.LEFT, padx=2)
+        self._bottom_primary_btn = ttk.Button(bottom, text="Далее →", command=self._primary_action)
+        self._bottom_primary_btn.pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Запустить анализ", command=self._run_analysis).pack(side=tk.LEFT, padx=10)
         ttk.Button(bottom, text="Подключения", command=self._show_stage_1).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Проверить подключения", command=self._check_connections).pack(side=tk.LEFT, padx=2)
@@ -242,6 +244,7 @@ class MainWindow:
 
                 self.root.after(0, self._hide_progress)
                 self.root.after(0, lambda: self._update_stage_indicators())
+                self.root.after(0, self._update_bottom_buttons)
                 self.root.after(0, lambda: self.controller.set_current_stage(1))
                 self.root.after(0, self._show_stage_content)
 
@@ -250,246 +253,283 @@ class MainWindow:
                 self.root.after(0, lambda e_=e: self.controller.set_stage_error("stage_2", str(e_)))
                 self.root.after(0, self._hide_progress)
                 self.root.after(0, self._update_stage_indicators)
+                self.root.after(0, self._update_bottom_buttons)
 
         self._bg_thread = threading.Thread(target=bg_work, daemon=True)
         self._bg_thread.start()
         self._cancel_requested = False
 
-    def _run_stages_3_to_6_bg(self, extracted, all_candidates: list) -> None:
-        if self._cancel_requested: return
-        self.root.after(0, lambda: self.info_text.insert(tk.END, "\n[Этап 3] Сравнение с календарём...\n"))
-        try:
-            calendar_gw = self.container.get_calendar_gateway() if self.container else None
-            from datetime import date, timedelta
-
-            from calendar_planner.app.settings import settings
-            from calendar_planner.calendar.matcher import CalendarMatcher
-            calendar_events: list = []
-            tool_name = getattr(calendar_gw, '_find_tool', 'unknown') if calendar_gw else 'unknown'
-            range_start = ""
-            range_end = ""
-            raw_event_count = 0
-            if calendar_gw:
-                candidate_dates = [d for c in all_candidates if c.start_date and (d := self._parse_candidate_date(c.start_date)) is not None]
-                buffer = timedelta(days=settings.CALENDAR_DATE_RANGE_BUFFER_DAYS)
-                range_start = (min(candidate_dates) - buffer).isoformat() if candidate_dates else date.today().isoformat()
-                range_end = (max(candidate_dates) + buffer).isoformat() if candidate_dates else (date.today() + timedelta(days=90)).isoformat()
-                try:
-                    self.root.after(0, lambda: self._show_progress("Получение событий календаря...", 60))
-                    calendar_events = calendar_gw.find_events(range_start, range_end)
-                    raw_event_count = len(calendar_gw.get_last_raw_response())
-                except Exception as exc:
-                    self.root.after(0, lambda e_=exc: self.info_text.insert(tk.END, f"  Ошибка: {e_}\n"))
-                    self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_3", str(e_)))
-                    self.controller.set_stage3_diagnostics({
-                        "tool_name": tool_name,
-                        "range_start": range_start,
-                        "range_end": range_end,
-                        "raw_event_count": 0,
-                        "parsed_event_count": 0,
-                        "duplicate_count": 0,
-                        "new_count": len(all_candidates),
-                        "status": "error",
-                        "error": str(exc),
-                    })
-                    return
-            if self._cancel_requested: return
-            matcher = CalendarMatcher(tolerance_minutes=30, subject_threshold=0.75)
-            matches = matcher.match_all(all_candidates, calendar_events)
-            self.controller.set_matches(matches)
-            self.controller.set_calendar_events(calendar_events)
-            matched_count = sum(1 for m in matches.values() if m is not None and m.decision.name != "NEW")
-            new_count = sum(1 for m in matches.values() if m is not None and m.decision.name == "NEW")
-            self.root.after(0, lambda: self.info_text.insert(tk.END, f"  Совпадений: {matched_count}, новых: {new_count}\n"))
-            stage3_diag = {
-                "tool_name": tool_name,
-                "range_start": range_start,
-                "range_end": range_end,
-                "raw_event_count": raw_event_count,
-                "parsed_event_count": len(calendar_events),
-                "duplicate_count": matched_count,
-                "new_count": new_count,
-                "status": "success",
-            }
-            if len(calendar_events) == 0:
-                stage3_diag["status"] = "success_with_warnings"
-                stage3_diag["warning"] = "В календаре не найдено событий в указанном диапазоне."
-                self.controller.set_stage3_diagnostics(stage3_diag)
-                self.root.after(0, lambda: self.info_text.insert(
-                    tk.END, "  В календаре не найдено событий в указанном диапазоне.\n",
-                ))
-                self.root.after(0, lambda: self.controller.set_stage_success("stage_3"))
-                self.controller.stages[2].status = StageStatus.SUCCESS_WITH_WARNINGS
-                self.controller.stages[2].warnings.append(
-                    "В календаре не найдено событий в указанном диапазоне."
-                )
-            else:
-                self.controller.set_stage3_diagnostics(stage3_diag)
-                self.root.after(0, lambda: self.controller.set_stage_success("stage_3"))
-        except Exception as exc:
-            self.root.after(0, lambda e_=exc: self.info_text.insert(tk.END, f"  ОШИБКА этапа 3: {e_}\n"))
-            self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_3", str(e_)))
-            self.controller.set_stage3_diagnostics({
-                "tool_name": getattr(calendar_gw, '_find_tool', 'unknown') if 'calendar_gw' in dir() else 'unknown',
-                "range_start": range_start if 'range_start' in dir() else "",
-                "range_end": range_end if 'range_end' in dir() else "",
-                "raw_event_count": 0,
-                "parsed_event_count": 0,
-                "duplicate_count": 0,
-                "new_count": len(all_candidates),
-                "status": "error",
-                "error": str(exc),
-            })
+    def _run_stage_3_async(self):
+        """Run calendar comparison in background thread."""
+        # prerequisite: stage 2 (index 1) must be success
+        stage_2_status = self.controller.get_stage_status(1)
+        if stage_2_status not in ("success", "success_with_warnings"):
+            messagebox.showwarning("Ошибка", "Этап 2 не завершён. Сначала выполните поиск встреч.")
             return
 
-        if self._cancel_requested: return
-        self.root.after(0, lambda: self._show_progress("Определение участников...", 70))
-        self.root.after(0, lambda: self.info_text.insert(tk.END, "[Этап 4] Участники...\n"))
-        try:
-            directory_gw = self.container.get_directory_gateway() if self.container else None
-            from calendar_planner.participants.resolver import ParticipantResolver
-            resolver = ParticipantResolver(directory_gateway=directory_gw)
-            participants = resolver.resolve(all_candidates, extracted)
-            self.controller.set_participants(participants)
-            self.root.after(0, lambda: self.controller.set_stage_success("stage_4"))
-        except Exception as exc:
-            self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_4", str(e_)))
+        # prevent double-click
+        stage_3_status = self.controller.get_stage_status(2)
+        if stage_3_status == "in_progress":
+            return
 
-        if self._cancel_requested: return
-        self.root.after(0, lambda: self._show_progress("Сбор описания...", 80))
-        self.root.after(0, lambda: self.info_text.insert(tk.END, "[Этап 5] Дополнительные данные...\n"))
-        try:
-            from calendar_planner.enrichment.extractor import EnrichmentExtractor
-            enrichment = EnrichmentExtractor().extract(all_candidates, extracted)
-            self.controller.set_enrichment(enrichment)
-            self.root.after(0, lambda: self.controller.set_stage_success("stage_5"))
-        except Exception as exc:
-            self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_5", str(e_)))
+        all_candidates = self.controller.get_all_candidates()
+        extracted = self.controller._extracted
 
-        if self._cancel_requested: return
-        self.root.after(0, lambda: self._show_progress("Формирование черновиков...", 90))
-        self.root.after(0, lambda: self.info_text.insert(tk.END, "[Этап 6] Черновики...\n"))
-        try:
-            from calendar_planner.drafts.builder import DraftBuilder
-            participants_map = {p.candidate_id: p for p in self.controller._participants}
-            builder = DraftBuilder()
-            drafts = []
-            for candidate in all_candidates:
-                cp = participants_map.get(candidate.candidate_id)
-                items = self.controller._enrichment.get(candidate.candidate_id, [])
-                draft = builder.build_from_candidate(candidate, cp, items)
-                match_obj = self.controller._matches.get(candidate.candidate_id)
-                if match_obj is not None:
-                    draft.calendar_matches.append(match_obj)
-                    draft.match_status = "checked"
-                    draft.match_input_hash = draft.compute_input_hash()
-                drafts.append(draft)
-            self.controller.set_drafts(drafts)
-            self.root.after(0, lambda: self.controller.set_stage_success("stage_6"))
-            self.root.after(0, lambda: self.info_text.insert(tk.END, f"  Черновиков: {len(drafts)}\n"))
-        except Exception as exc:
-            self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_6", str(e_)))
+        self.controller.stages[2].status = StageStatus.IN_PROGRESS
+        self._update_stage_indicators()
+        self._update_bottom_buttons()
 
-        self.root.after(0, lambda: self.info_text.insert(tk.END, "\nАнализ завершён.\n"))
+        calendar_gw = self.container.get_calendar_gateway() if self.container else None
 
-    def _run_stages_3_to_6(self, extracted, all_candidates: list) -> None:
-        self.info_text.insert(tk.END, "\n" + "=" * 60 + "\n")
-        self.info_text.insert(tk.END, "Выполнение этапов 3-6...\n\n")
+        from datetime import date, timedelta
 
-        # --- Stage 3: Calendar Comparison ---
-        self.info_text.insert(tk.END, "[Этап 3] Сравнение с календарём...\n")
-        try:
-            calendar_gw = self.container.get_calendar_gateway() if self.container else None
-            from datetime import date, timedelta
+        from calendar_planner.app.settings import settings
+        from calendar_planner.calendar.matcher import CalendarMatcher
 
-            from calendar_planner.app.settings import settings
-            from calendar_planner.calendar.matcher import CalendarMatcher
+        tool_name = getattr(calendar_gw, '_find_tool', 'unknown') if calendar_gw else 'unknown'
+        range_start = ""
+        range_end = ""
 
-            calendar_events: list = []
-            if calendar_gw:
-                candidate_dates = [
-                    d for c in all_candidates
-                    if c.start_date and (d := self._parse_candidate_date(c.start_date)) is not None
-                ]
-                if candidate_dates:
-                    min_date = min(candidate_dates)
-                    max_date = max(candidate_dates)
-                    buffer = timedelta(days=settings.CALENDAR_DATE_RANGE_BUFFER_DAYS)
-                    range_start = (min_date - buffer).isoformat()
-                    range_end = (max_date + buffer).isoformat()
+        if calendar_gw:
+            candidate_dates = [d for c in all_candidates if c.start_date and (d := self._parse_candidate_date(c.start_date)) is not None]
+            buffer = timedelta(days=settings.CALENDAR_DATE_RANGE_BUFFER_DAYS)
+            range_start = (min(candidate_dates) - buffer).isoformat() if candidate_dates else date.today().isoformat()
+            range_end = (max(candidate_dates) + buffer).isoformat() if candidate_dates else (date.today() + timedelta(days=90)).isoformat()
+        else:
+            range_start = date.today().isoformat()
+            range_end = (date.today() + timedelta(days=90)).isoformat()
+
+        def _bg_work():
+            try:
+                self.root.after(0, lambda: self._show_progress("Сравнение с календарём...", 40))
+                self.root.after(0, lambda: self.info_text.insert(tk.END, "\n[Этап 3] Сравнение с календарём...\n"))
+
+                calendar_events: list = []
+                raw_event_count = 0
+                if calendar_gw:
+                    try:
+                        calendar_events = calendar_gw.find_events(range_start, range_end)
+                        raw_event_count = len(calendar_gw.get_last_raw_response())
+                    except Exception as exc:
+                        self.root.after(0, lambda e_=exc: self.info_text.insert(tk.END, f"  Ошибка получения событий календаря: {e_}\n"))
+                        self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_3", str(e_)))
+                        self.controller.set_stage3_diagnostics({
+                            "tool_name": tool_name,
+                            "range_start": range_start,
+                            "range_end": range_end,
+                            "raw_event_count": 0,
+                            "parsed_event_count": 0,
+                            "duplicate_count": 0,
+                            "new_count": len(all_candidates),
+                            "status": "error",
+                            "error": str(exc),
+                        })
+                        self.root.after(0, self._hide_progress)
+                        self.root.after(0, self._update_stage_indicators)
+                        self.root.after(0, self._update_bottom_buttons)
+                        return
+
+                if self._cancel_requested:
+                    self.root.after(0, lambda: self.info_text.insert(tk.END, "\n[ОТМЕНЕНО]\n"))
+                    self.root.after(0, self._hide_progress)
+                    self.root.after(0, self._update_stage_indicators)
+                    self.root.after(0, self._update_bottom_buttons)
+                    return
+
+                matcher = CalendarMatcher(tolerance_minutes=30, subject_threshold=0.75)
+                matches = matcher.match_all(all_candidates, calendar_events)
+                self.controller.set_matches(matches)
+                self.controller.set_calendar_events(calendar_events)
+
+                matched_count = sum(1 for m in matches.values() if m is not None and m.decision.name != "NEW")
+                new_count = sum(1 for m in matches.values() if m is not None and m.decision.name == "NEW")
+
+                stage3_diag = {
+                    "tool_name": tool_name,
+                    "range_start": range_start,
+                    "range_end": range_end,
+                    "raw_event_count": raw_event_count,
+                    "parsed_event_count": len(calendar_events),
+                    "duplicate_count": matched_count,
+                    "new_count": new_count,
+                    "status": "success",
+                }
+
+                if len(calendar_events) == 0:
+                    stage3_diag["status"] = "success_with_warnings"
+                    stage3_diag["warning"] = "В календаре не найдено событий в указанном диапазоне."
+                    self.controller.set_stage3_diagnostics(stage3_diag)
+                    self.root.after(0, lambda: self.info_text.insert(
+                        tk.END, "  В календаре не найдено событий в указанном диапазоне.\n",
+                    ))
+                    self.root.after(0, lambda: self.controller.set_stage_success("stage_3"))
+                    self.controller.stages[2].status = StageStatus.SUCCESS_WITH_WARNINGS
+                    self.controller.stages[2].warnings.append(
+                        "В календаре не найдено событий в указанном диапазоне."
+                    )
                 else:
-                    today = date.today().isoformat()
-                    range_start = today
-                    range_end = (date.today() + timedelta(days=90)).isoformat()
+                    self.controller.set_stage3_diagnostics(stage3_diag)
+                    self.root.after(0, lambda: self.controller.set_stage_success("stage_3"))
 
-                try:
-                    calendar_events = calendar_gw.find_events(range_start, range_end)
-                except Exception as exc:
-                    self.info_text.insert(tk.END, f"  Ошибка получения событий календаря: {exc}\n")
-                    self.controller.set_stage_error("stage_3", str(exc))
-                    self._update_stage_indicators()
-                    return
+                self.root.after(0, lambda: self.info_text.insert(
+                    tk.END, f"  Совпадений: {matched_count}, новых: {new_count}\n",
+                ))
+                self.root.after(0, self._hide_progress)
+                self.root.after(0, self._update_stage_indicators)
+                self.root.after(0, self._update_bottom_buttons)
+                self.root.after(0, lambda: self.controller.set_current_stage(2))
+                self.root.after(0, self._show_stage_content)
 
-            matcher = CalendarMatcher(tolerance_minutes=30, subject_threshold=0.75)
-            matches = matcher.match_all(all_candidates, calendar_events)
-            self.controller.set_matches(matches)
-            self.controller.set_calendar_events(calendar_events)
+            except Exception as exc:
+                self.root.after(0, lambda e_=exc: self.info_text.insert(tk.END, f"  ОШИБКА этапа 3: {e_}\n"))
+                self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_3", str(e_)))
+                self.controller.set_stage3_diagnostics({
+                    "tool_name": tool_name,
+                    "range_start": range_start,
+                    "range_end": range_end,
+                    "raw_event_count": 0,
+                    "parsed_event_count": 0,
+                    "duplicate_count": 0,
+                    "new_count": len(all_candidates),
+                    "status": "error",
+                    "error": str(exc),
+                })
+                self.root.after(0, self._hide_progress)
+                self.root.after(0, self._update_stage_indicators)
+                self.root.after(0, self._update_bottom_buttons)
 
-            matched_count = sum(
-                1 for m in matches.values()
-                if m is not None and m.decision.name != "NEW"
-            )
-            self.info_text.insert(tk.END, f"  Сравнено: {len(all_candidates)}, найдено совпадений: {matched_count}\n")
-            self.controller.set_stage_success("stage_3")
-        except Exception as exc:
-            self.info_text.insert(tk.END, f"  ОШИБКА этапа 3: {exc}\n")
-            self.controller.set_stage_error("stage_3", str(exc))
-            self._update_stage_indicators()
-            self._show_stage_content()
+        self._bg_thread = threading.Thread(target=_bg_work, daemon=True)
+        self._bg_thread.start()
+        self._cancel_requested = False
+
+    def _run_stage_4_async(self):
+        """Run participant resolution in background thread."""
+        # prerequisite: stage 3 (index 2) must be success
+        stage_3_status = self.controller.get_stage_status(2)
+        if stage_3_status not in ("success", "success_with_warnings"):
+            messagebox.showwarning("Ошибка", "Этап 3 не завершён. Сначала выполните сравнение с календарём.")
             return
 
-        # --- Stage 4: Participant Resolution ---
-        self.info_text.insert(tk.END, "[Этап 4] Определение участников...\n")
+        # prevent double-click
+        stage_4_status = self.controller.get_stage_status(3)
+        if stage_4_status == "in_progress":
+            return
+
+        all_candidates = self.controller.get_all_candidates()
+        extracted = self.controller._extracted
+
+        self.controller.stages[3].status = StageStatus.IN_PROGRESS
+        self._update_stage_indicators()
+        self._update_bottom_buttons()
+
+        directory_gw = self.container.get_directory_gateway() if self.container else None
+
+        def _bg_work():
+            try:
+                self.root.after(0, lambda: self._show_progress("Определение участников...", 60))
+                self.root.after(0, lambda: self.info_text.insert(tk.END, "[Этап 4] Определение участников...\n"))
+
+                from calendar_planner.participants.resolver import ParticipantResolver
+
+                resolver = ParticipantResolver(directory_gateway=directory_gw)
+                participants = resolver.resolve(all_candidates, extracted)
+                self.controller.set_participants(participants)
+
+                resolved_perf = sum(len(cp.performer) for cp in participants)
+                resolved_cust = sum(len(cp.customer) for cp in participants)
+                unresolved = sum(len(cp.unresolved) for cp in participants)
+                self.root.after(0, lambda: self.info_text.insert(
+                    tk.END,
+                    f"  Исполнителей: {resolved_perf}, Заказчиков: {resolved_cust}, "
+                    f"Не найдено: {unresolved}\n",
+                ))
+                self.root.after(0, lambda: self.controller.set_stage_success("stage_4"))
+                self.root.after(0, self._hide_progress)
+                self.root.after(0, self._update_stage_indicators)
+                self.root.after(0, self._update_bottom_buttons)
+                self.root.after(0, lambda: self.controller.set_current_stage(3))
+                self.root.after(0, self._show_stage_content)
+
+            except Exception as exc:
+                self.root.after(0, lambda e_=exc: self.info_text.insert(tk.END, f"  ОШИБКА этапа 4: {e_}\n"))
+                self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_4", str(e_)))
+                self.root.after(0, self._hide_progress)
+                self.root.after(0, self._update_stage_indicators)
+                self.root.after(0, self._update_bottom_buttons)
+
+        self._bg_thread = threading.Thread(target=_bg_work, daemon=True)
+        self._bg_thread.start()
+        self._cancel_requested = False
+
+    def _run_stage_5_async(self):
+        """Run enrichment in background thread."""
+        # prerequisite: stage 4 (index 3) must be success
+        stage_4_status = self.controller.get_stage_status(3)
+        if stage_4_status not in ("success", "success_with_warnings"):
+            messagebox.showwarning("Ошибка", "Этап 4 не завершён. Сначала определите участников.")
+            return
+
+        # prevent double-click
+        stage_5_status = self.controller.get_stage_status(4)
+        if stage_5_status == "in_progress":
+            return
+
+        all_candidates = self.controller.get_all_candidates()
+        extracted = self.controller._extracted
+
+        self.controller.stages[4].status = StageStatus.IN_PROGRESS
+        self._update_stage_indicators()
+        self._update_bottom_buttons()
+
+        def _bg_work():
+            try:
+                self.root.after(0, lambda: self._show_progress("Сбор дополнительных данных...", 70))
+                self.root.after(0, lambda: self.info_text.insert(tk.END, "[Этап 5] Сбор дополнительных данных...\n"))
+
+                from calendar_planner.enrichment.extractor import EnrichmentExtractor
+
+                enrichment = EnrichmentExtractor().extract(all_candidates, extracted)
+                self.controller.set_enrichment(enrichment)
+
+                total_items = sum(len(items) for items in enrichment.values())
+                self.root.after(0, lambda: self.info_text.insert(
+                    tk.END, f"  Найдено элементов описания: {total_items}\n",
+                ))
+                self.root.after(0, lambda: self.controller.set_stage_success("stage_5"))
+                self.root.after(0, self._hide_progress)
+                self.root.after(0, self._update_stage_indicators)
+                self.root.after(0, self._update_bottom_buttons)
+                self.root.after(0, lambda: self.controller.set_current_stage(4))
+                self.root.after(0, self._show_stage_content)
+
+            except Exception as exc:
+                self.root.after(0, lambda e_=exc: self.info_text.insert(tk.END, f"  ОШИБКА этапа 5: {e_}\n"))
+                self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_5", str(e_)))
+                self.root.after(0, self._hide_progress)
+                self.root.after(0, self._update_stage_indicators)
+                self.root.after(0, self._update_bottom_buttons)
+
+        self._bg_thread = threading.Thread(target=_bg_work, daemon=True)
+        self._bg_thread.start()
+        self._cancel_requested = False
+
+    def _run_stage_6(self):
+        """Build event cards from confirmed data."""
+        # prerequisite: stage 5 (index 4) must be success
+        stage_5_status = self.controller.get_stage_status(4)
+        if stage_5_status not in ("success", "success_with_warnings"):
+            messagebox.showwarning("Ошибка", "Этап 5 не завершён. Сначала соберите дополнительные данные.")
+            return
+
+        all_candidates = self.controller.get_all_candidates()
+
+        self.controller.stages[5].status = StageStatus.IN_PROGRESS
+        self._update_stage_indicators()
+        self._update_bottom_buttons()
+
         try:
-            directory_gw = self.container.get_directory_gateway() if self.container else None
-            from calendar_planner.participants.resolver import ParticipantResolver
+            self.info_text.insert(tk.END, "[Этап 6] Формирование черновиков...\n")
 
-            resolver = ParticipantResolver(directory_gateway=directory_gw)
-            participants = resolver.resolve(all_candidates, extracted)
-            self.controller.set_participants(participants)
-
-            resolved_perf = sum(len(cp.performer) for cp in participants)
-            resolved_cust = sum(len(cp.customer) for cp in participants)
-            unresolved = sum(len(cp.unresolved) for cp in participants)
-            self.info_text.insert(
-                tk.END,
-                f"  Исполнителей: {resolved_perf}, Заказчиков: {resolved_cust}, "
-                f"Не найдено: {unresolved}\n",
-            )
-            self.controller.set_stage_success("stage_4")
-        except Exception as exc:
-            self.info_text.insert(tk.END, f"  ОШИБКА этапа 4: {exc}\n")
-            self.controller.set_stage_error("stage_4", str(exc))
-
-        # --- Stage 5: Enrichment ---
-        self.info_text.insert(tk.END, "[Этап 5] Сбор дополнительных данных...\n")
-        try:
-            from calendar_planner.enrichment.extractor import EnrichmentExtractor
-
-            enrichment_extractor = EnrichmentExtractor()
-            enrichment = enrichment_extractor.extract(all_candidates, extracted)
-            self.controller.set_enrichment(enrichment)
-
-            total_items = sum(len(items) for items in enrichment.values())
-            self.info_text.insert(tk.END, f"  Найдено элементов описания: {total_items}\n")
-            self.controller.set_stage_success("stage_5")
-        except Exception as exc:
-            self.info_text.insert(tk.END, f"  ОШИБКА этапа 5: {exc}\n")
-            self.controller.set_stage_error("stage_5", str(exc))
-
-        # --- Stage 6: Build Drafts ---
-        self.info_text.insert(tk.END, "[Этап 6] Формирование черновиков...\n")
-        try:
             from calendar_planner.drafts.builder import DraftBuilder
 
             participants_map = {p.candidate_id: p for p in self.controller._participants}
@@ -501,9 +541,9 @@ class MainWindow:
                 items = self.controller._enrichment.get(candidate.candidate_id, [])
                 draft = builder.build_from_candidate(candidate, cp, items)
 
-                existing_match = matches.get(candidate.candidate_id)
-                if existing_match is not None:
-                    draft.calendar_matches.append(existing_match)
+                match_obj = self.controller._matches.get(candidate.candidate_id)
+                if match_obj is not None:
+                    draft.calendar_matches.append(match_obj)
                     draft.match_status = "checked"
                     draft.match_input_hash = draft.compute_input_hash()
 
@@ -519,15 +559,16 @@ class MainWindow:
             self.controller.set_stage_success("stage_6")
 
             self.controller.set_current_stage(5)
+            self._update_stage_indicators()
+            self._update_bottom_buttons()
+            self._show_stage_content()
+
         except Exception as exc:
             self.info_text.insert(tk.END, f"  ОШИБКА этапа 6: {exc}\n")
             self.controller.set_stage_error("stage_6", str(exc))
-
-        self.info_text.insert(tk.END, "\n" + "=" * 60 + "\n")
-        self.info_text.insert(tk.END, "Анализ завершён.\n")
-
-        self._update_stage_indicators()
-        self._show_stage_content()
+            self._update_stage_indicators()
+            self._update_bottom_buttons()
+            self._show_stage_content()
 
     def _save_session(self) -> None:
         try:
@@ -540,17 +581,80 @@ class MainWindow:
     def _prev_stage(self) -> None:
         self.controller.prev_stage()
         self._update_stage_indicators()
+        self._update_bottom_buttons()
         self._show_stage_content()
 
     def _go_to_stage(self, stage: int) -> None:
+        for s in range(stage):
+            status = self.controller.get_stage_status(s)
+            if status not in ("success", "success_with_warnings"):
+                messagebox.showinfo("Внимание", f"Сначала завершите этап {s + 1}")
+                return
         self.controller.set_current_stage(stage)
         self._update_stage_indicators()
+        self._update_bottom_buttons()
         self._show_stage_content()
 
-    def _next_stage(self) -> None:
-        self.controller.next_stage()
+    def _primary_action(self) -> None:
+        stage = self.controller.current_stage
+        status = self.controller.get_stage_status(stage)
+
+        if stage == 1 and status in ("success", "success_with_warnings"):
+            self._run_stage_3_async()
+        elif stage == 2 and status in ("success", "success_with_warnings"):
+            self._run_stage_4_async()
+        elif stage == 3 and status in ("success", "success_with_warnings"):
+            self._run_stage_5_async()
+        elif stage == 4 and status in ("success", "success_with_warnings"):
+            self._run_stage_6()
+        elif status == "failed":
+            retry_map = {
+                0: self._check_connections,
+                1: self._run_analysis,
+                2: self._run_stage_3_async,
+                3: self._run_stage_4_async,
+                4: self._run_stage_5_async,
+                5: self._run_stage_6,
+            }
+            retry_action = retry_map.get(stage)
+            if retry_action:
+                retry_action()
+        else:
+            self.controller.next_stage()
+            self._update_stage_indicators()
+            self._update_bottom_buttons()
+            self._show_stage_content()
+
+    def _update_bottom_buttons(self) -> None:
+        stage = self.controller.current_stage
+        status = self.controller.get_stage_status(stage)
+
+        btn_texts = {
+            (1, "success"): "Сравнить с календарём →",
+            (1, "success_with_warnings"): "Сравнить с календарём →",
+            (2, "success"): "Определить участников →",
+            (2, "success_with_warnings"): "Определить участников →",
+            (3, "success"): "Собрать дополнительные данные →",
+            (3, "success_with_warnings"): "Собрать дополнительные данные →",
+            (4, "success"): "Сформировать карточки событий →",
+            (4, "success_with_warnings"): "Сформировать карточки событий →",
+            (5, "success"): "Завершить",
+            (5, "success_with_warnings"): "Завершить",
+        }
+
+        text = btn_texts.get((stage, status), "Далее →")
+        self._bottom_primary_btn.config(text=text)
+
+    def _invalidate_stages_5_6(self) -> None:
+        """Set stage 5 and stage 6 to stale/not_started, clear drafts."""
+        if self.controller.get_stage_status(4) == "success":
+            self.controller.stages[4].status = StageStatus.STALE
+        if self.controller.get_stage_status(5) == "success":
+            self.controller.stages[5].status = StageStatus.STALE
+        self.controller._drafts = []
+        self.controller._enrichment = {}
         self._update_stage_indicators()
-        self._show_stage_content()
+        self._update_bottom_buttons()
 
     def _copy_results(self) -> None:
         text = self.info_text.get(1.0, tk.END)
@@ -609,6 +713,8 @@ class MainWindow:
         elif stage == 5:
             self._show_stage_6_content()
 
+        self._update_bottom_buttons()
+
     def _show_stage_1_content(self) -> None:
         from calendar_planner.ui.stages.stage1_connections import Stage1ConnectionsFrame
         frame = Stage1ConnectionsFrame(self.content_frame, container=self.container)
@@ -649,6 +755,9 @@ class MainWindow:
         )
         frame.pack(fill=tk.BOTH, expand=True)
         self._stage_frames[3] = frame
+
+        frame.on("retry_search", lambda **kw: self._run_stage_4_async())
+        frame.on("participant_changed", lambda **kw: self._invalidate_stages_5_6())
 
     def _show_stage_5_content(self) -> None:
         from calendar_planner.ui.stages.stage5_enrichment import Stage5EnrichmentFrame
@@ -859,6 +968,7 @@ class MainWindow:
             self.info_text.insert(tk.END, f"\nОШИБКА проверки: {e}\n")
             self.controller.set_stage_error("stage_1", str(e))
             self._update_stage_indicators()
+            self._update_bottom_buttons()
             return
 
         has_errors = False
@@ -892,6 +1002,7 @@ class MainWindow:
             self.info_text.insert(tk.END, "ИТОГ: Подключения работают с предупреждениями\n")
 
         self._update_stage_indicators()
+        self._update_bottom_buttons()
 
     def _show_connection_error_actions(self, results: list[dict]) -> None:
         for widget in self.main_frame.winfo_children():

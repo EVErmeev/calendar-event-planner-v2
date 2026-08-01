@@ -391,7 +391,7 @@ class TestContainerFixturePolicy:
         with pytest.raises(RuntimeError, match="MCP not available"):
             container.get_calendar_gateway()
 
-        with pytest.raises(RuntimeError, match="MCP not available"):
+        with pytest.raises(RuntimeError, match="No directory gateway available"):
             container.get_directory_gateway()
 
     def test_rejects_fixture_in_development_env(self):
@@ -408,7 +408,7 @@ class TestContainerFixturePolicy:
         with pytest.raises(RuntimeError, match="MCP not available"):
             container.get_calendar_gateway()
 
-        with pytest.raises(RuntimeError, match="MCP not available"):
+        with pytest.raises(RuntimeError, match="No directory gateway available"):
             container.get_directory_gateway()
 
     def test_allows_fixture_in_test_env(self):

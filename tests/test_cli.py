@@ -14,6 +14,7 @@ class TestCheckConnections:
     def test_output_format(self, monkeypatch, capsys):
         monkeypatch.setenv("MCP_ENABLED", "false")
         monkeypatch.setenv("MCP_SERVER_URL", "")
+        monkeypatch.setenv("APP_ENV", "test")
 
         from calendar_planner.cli import cmd_check_connections
 

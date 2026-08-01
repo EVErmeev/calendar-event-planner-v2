@@ -1,0 +1,1 @@
+# Validation: 3588f13 — pipeline dead-end, EWS not integrated, CI failed

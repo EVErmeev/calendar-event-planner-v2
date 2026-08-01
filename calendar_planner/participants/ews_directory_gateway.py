@@ -7,6 +7,11 @@ from xml.etree import ElementTree
 import requests
 from requests_ntlm import HttpNtlmAuth
 
+from calendar_planner.participants.directory_result import (
+    DirectoryPerson,
+    DirectorySearchResult,
+)
+
 logger = logging.getLogger(__name__)
 
 SOAP_HEADERS = {
@@ -52,20 +57,23 @@ class EWSDirectoryGateway:
     def get_capability(self) -> str:
         return "exchange_ews_gal"
 
-    def search(self, query: str, limit: int = 20) -> dict:
+    def search(self, query: str, limit: int = 20) -> DirectorySearchResult:
         correlation_id = str(uuid.uuid4())
-        base_result = {
-            "query": query,
-            "source": "exchange_ews_gal",
-            "correlation_id": correlation_id,
-        }
+        base = DirectorySearchResult(
+            query=query,
+            source="exchange_ews_gal",
+            correlation_id=correlation_id,
+        )
 
         if not self.is_available():
             logger.warning(
                 "EWSDirectoryGateway: endpoint or username not configured",
                 extra={"correlation_id": correlation_id},
             )
-            return {**base_result, "status": "failed", "people": [], "error": "Gateway not configured"}
+            base.status = "failed"
+            base.error_message = "Gateway not configured"
+            base.error_code = "GATEWAY_NOT_CONFIGURED"
+            return base
 
         masked_user = self._username[:2] + "***" if self._username else "***"
         logger.info(
@@ -93,12 +101,10 @@ class EWSDirectoryGateway:
                 exc_info=True,
                 extra={"correlation_id": correlation_id},
             )
-            return {
-                **base_result,
-                "status": "timeout",
-                "people": [],
-                "error": f"Request timed out after {self._timeout}s",
-            }
+            base.status = "timeout"
+            base.error_message = f"Request timed out after {self._timeout}s"
+            base.error_code = "TIMEOUT"
+            return base
         except requests.ConnectionError as exc:
             logger.warning(
                 "EWSDirectoryGateway: connection error: %s",
@@ -106,12 +112,10 @@ class EWSDirectoryGateway:
                 exc_info=True,
                 extra={"correlation_id": correlation_id},
             )
-            return {
-                **base_result,
-                "status": "failed",
-                "people": [],
-                "error": str(exc),
-            }
+            base.status = "failed"
+            base.error_message = str(exc)
+            base.error_code = "CONNECTION_ERROR"
+            return base
         except requests.RequestException as exc:
             logger.warning(
                 "EWSDirectoryGateway: request failed: %s",
@@ -119,24 +123,20 @@ class EWSDirectoryGateway:
                 exc_info=True,
                 extra={"correlation_id": correlation_id},
             )
-            return {
-                **base_result,
-                "status": "failed",
-                "people": [],
-                "error": str(exc),
-            }
+            base.status = "failed"
+            base.error_message = str(exc)
+            base.error_code = "REQUEST_ERROR"
+            return base
 
         if response.status_code == 401:
             logger.warning(
                 "EWSDirectoryGateway: authentication failed (HTTP 401)",
                 extra={"correlation_id": correlation_id},
             )
-            return {
-                **base_result,
-                "status": "auth_failed",
-                "people": [],
-                "error": "Authentication failed (HTTP 401)",
-            }
+            base.status = "auth_failed"
+            base.error_message = "Authentication failed (HTTP 401)"
+            base.error_code = "AUTH_FAILED"
+            return base
 
         if response.status_code != 200:
             logger.warning(
@@ -144,12 +144,10 @@ class EWSDirectoryGateway:
                 response.status_code,
                 extra={"correlation_id": correlation_id},
             )
-            return {
-                **base_result,
-                "status": "failed",
-                "people": [],
-                "error": f"HTTP {response.status_code}",
-            }
+            base.status = "failed"
+            base.error_message = f"HTTP {response.status_code}"
+            base.error_code = "HTTP_ERROR"
+            return base
 
         try:
             root = ElementTree.fromstring(response.text)
@@ -159,12 +157,10 @@ class EWSDirectoryGateway:
                 exc,
                 extra={"correlation_id": correlation_id},
             )
-            return {
-                **base_result,
-                "status": "failed",
-                "people": [],
-                "error": f"XML parse error: {exc}",
-            }
+            base.status = "failed"
+            base.error_message = f"XML parse error: {exc}"
+            base.error_code = "XML_PARSE_ERROR"
+            return base
 
         ns = {
             "t": "http://schemas.microsoft.com/exchange/services/2006/types",
@@ -177,52 +173,51 @@ class EWSDirectoryGateway:
                 "EWSDirectoryGateway: no m:ResolutionSet in SOAP response",
                 extra={"correlation_id": correlation_id},
             )
-            return {
-                **base_result,
-                "status": "failed",
-                "people": [],
-                "error": "No ResolutionSet in response",
-            }
+            base.status = "failed"
+            base.error_message = "No ResolutionSet in response"
+            base.error_code = "NO_RESOLUTION_SET"
+            return base
 
         resolution_entries = resolution_set.findall("t:Resolution", ns)
         people = self._parse_resolutions(resolution_entries, ns, correlation_id)
 
         people = people[:limit]
+        base.people = people
 
         if len(people) == 0:
-            status = "not_found"
+            base.status = "not_found"
         elif len(people) == 1:
-            status = "success"
+            base.status = "success"
         else:
-            status = "ambiguous"
+            base.status = "ambiguous"
 
         logger.info(
             "EWSDirectoryGateway: resolved %d match(es), status=%s",
             len(people),
-            status,
+            base.status,
             extra={"correlation_id": correlation_id},
         )
 
-        return {**base_result, "status": status, "people": people, "error": None}
+        return base
 
     def _parse_resolutions(self, resolution_entries, ns, correlation_id):
         people = []
         for entry in resolution_entries:
             try:
-                person = {
-                    "full_name": _deep_get_text(entry, "t:Mailbox/t:Name", ns),
-                    "email": _deep_get_text(entry, "t:Mailbox/t:EmailAddress", ns),
-                    "mailbox_type": _deep_get_text(entry, "t:Mailbox/t:MailboxType", ns),
-                    "company": _deep_get_text(entry, "t:Contact/t:CompanyName", ns),
-                    "department": _deep_get_text(entry, "t:Contact/t:Department", ns),
-                    "job_title": _deep_get_text(entry, "t:Contact/t:JobTitle", ns),
-                }
+                person = DirectoryPerson(
+                    display_name=_deep_get_text(entry, "t:Mailbox/t:Name", ns),
+                    email=_deep_get_text(entry, "t:Mailbox/t:EmailAddress", ns),
+                    mailbox_type=_deep_get_text(entry, "t:Mailbox/t:MailboxType", ns) or None,
+                    company=_deep_get_text(entry, "t:Contact/t:CompanyName", ns) or None,
+                    department=_deep_get_text(entry, "t:Contact/t:Department", ns) or None,
+                    job_title=_deep_get_text(entry, "t:Contact/t:JobTitle", ns) or None,
+                )
                 people.append(person)
 
-                masked_email = _mask_email(person["email"])
+                masked_email = _mask_email(person.email)
                 logger.debug(
                     "EWSDirectoryGateway: resolved person name=%s email=%s",
-                    _mask_for_log(person["full_name"]),
+                    _mask_for_log(person.display_name),
                     masked_email,
                     extra={"correlation_id": correlation_id},
                 )

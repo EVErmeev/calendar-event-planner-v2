@@ -2,10 +2,10 @@
   "schema_version": 1,
   "repository": "EVErmeev/calendar-event-planner-v2",
   "default_branch": "master",
-  "validated_code_commit": "b6a1cd554e132598abb0875dbd550b34c16d4a33",
+  "validated_code_commit": "3588f1339cccf3eea4c2127047b1aa961c469f8a",
   "validation_metadata_commit": null,
-  "active_task": "docs/opencode/specifications/2026-08-01_009_live-source-ews-directory.md",
-  "latest_validation": "docs/opencode/validations/2026-08-02_b6a1cd5_live-validation.md",
+  "active_task": "docs/opencode/specifications/2026-08-02_010_fix-stage-workflow-ews-ci.md",
+  "latest_validation": "docs/opencode/validations/2026-08-02_3588f13_stage-workflow-validation.md",
   "current_status": "requires_fixes",
   "rules": {
     "dry_run_required": true,
