@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -19,11 +20,21 @@ from calendar_planner.app.mcp_transport import (
 # ---------------------------------------------------------------------------
 
 
-def _mock_response(json_data, status=200):
+def _mock_response(json_data, status=200, headers=None):
     resp = mock.MagicMock()
     resp.json.return_value = json_data
     resp.raise_for_status.return_value = None
     resp.status_code = status
+    resp.headers = headers or {}
+    return resp
+
+
+def _mock_sse_response(lines, status=200, headers=None):
+    resp = mock.MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.status_code = status
+    resp.headers = headers or {"Content-Type": "text/event-stream"}
+    resp.iter_lines.return_value = lines
     return resp
 
 
@@ -36,7 +47,7 @@ def _build_jsonrpc(id_val, result=None, error=None):
     return payload
 
 
-def _init_result(protocol_version="2024-11-05", server_name="test-server"):
+def _init_result(protocol_version="2025-03-26", server_name="test-server"):
     return {
         "protocolVersion": protocol_version,
         "capabilities": {"tools": {"listChanged": False}},
@@ -67,7 +78,7 @@ class TestJSONRPCFormat:
     def test_request_has_jsonrpc_field(self):
         transport = MCPTransport("http://fake-mcp.local")
         post_side_effect = [
-            _mock_response(_build_jsonrpc(1, _init_result())),
+            _mock_response(_build_jsonrpc(1, _init_result("2025-03-26"))),
             _NOTIFY_RESP,
             _mock_response(_build_jsonrpc(2, {"tools": []})),
         ]
@@ -85,7 +96,7 @@ class TestJSONRPCFormat:
     def test_notification_has_no_id(self):
         transport = MCPTransport("http://fake-mcp.local")
         post_side_effect = [
-            _mock_response(_build_jsonrpc(1, _init_result())),
+            _mock_response(_build_jsonrpc(1, _init_result("2025-03-26"))),
             _NOTIFY_RESP,
             _mock_response(_build_jsonrpc(2, {"tools": []})),
         ]
@@ -106,7 +117,7 @@ class TestJSONRPCFormat:
 
 
 class TestVersionNegotiation:
-    def test_uses_server_version_when_different(self):
+    def test_accepts_2025_03_26(self):
         transport = MCPTransport("http://fake-mcp.local")
         post_side_effect = [
             _mock_response(_build_jsonrpc(1, _init_result("2025-03-26"))),
@@ -116,28 +127,24 @@ class TestVersionNegotiation:
         _patch_and_connect(transport, post_side_effect)
 
         assert transport.protocol_version == "2025-03-26"
-
-    def test_falls_back_to_2024_11_05_when_2025_fails(self):
-        transport = MCPTransport("http://fake-mcp.local")
-        post_side_effect = [
-            _mock_response(_build_jsonrpc(1, error={"code": -32600, "message": "Unsupported version"})),
-            _mock_response(_build_jsonrpc(2, result=_init_result("2024-11-05"))),
-            _NOTIFY_RESP,
-            _mock_response(_build_jsonrpc(3, {"tools": []})),
-        ]
-        _patch_and_connect(transport, post_side_effect)
-
-        assert transport.protocol_version == "2024-11-05"
         assert transport.is_connected()
 
-    def test_raises_when_both_versions_fail(self):
+    def test_rejects_unsupported_version(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        post_side_effect = [
+            _mock_response(_build_jsonrpc(1, _init_result("2024-11-05"))),
+        ]
+
+        with pytest.raises(MCPProtocolError, match="not supported"):
+            _patch_and_connect(transport, post_side_effect)
+
+    def test_raises_when_server_init_fails(self):
         transport = MCPTransport("http://fake-mcp.local")
         post_side_effect = [
             _mock_response(_build_jsonrpc(1, error={"code": -32600, "message": "Bad"})),
-            _mock_response(_build_jsonrpc(2, error={"code": -32600, "message": "Bad"})),
         ]
 
-        with pytest.raises(MCPProtocolError, match="Failed to negotiate"):
+        with pytest.raises(MCPProtocolError):
             _patch_and_connect(transport, post_side_effect)
 
 
@@ -150,7 +157,7 @@ class TestInitializedNotification:
     def test_notification_sent_after_initialize(self):
         transport = MCPTransport("http://fake-mcp.local")
         post_side_effect = [
-            _mock_response(_build_jsonrpc(1, _init_result())),
+            _mock_response(_build_jsonrpc(1, _init_result("2025-03-26"))),
             _NOTIFY_RESP,
             _mock_response(_build_jsonrpc(2, {"tools": []})),
         ]
@@ -175,7 +182,7 @@ class TestToolsListPagination:
     def test_single_page_no_pagination(self):
         transport = MCPTransport("http://fake-mcp.local")
         post_side_effect = [
-            _mock_response(_build_jsonrpc(1, _init_result())),
+            _mock_response(_build_jsonrpc(1, _init_result("2025-03-26"))),
             _NOTIFY_RESP,
             _mock_response(_build_jsonrpc(2, {"tools": [{"name": "t1"}, {"name": "t2"}]})),
         ]
@@ -188,7 +195,7 @@ class TestToolsListPagination:
     def test_multi_page_with_next_cursor(self):
         transport = MCPTransport("http://fake-mcp.local")
         post_side_effect = [
-            _mock_response(_build_jsonrpc(1, _init_result())),
+            _mock_response(_build_jsonrpc(1, _init_result("2025-03-26"))),
             _NOTIFY_RESP,
             _mock_response(_build_jsonrpc(2, {"tools": [{"name": "t1"}], "nextCursor": "page2"})),
             _mock_response(_build_jsonrpc(3, {"tools": [{"name": "t2"}, {"name": "t3"}]})),
@@ -202,7 +209,7 @@ class TestToolsListPagination:
     def test_passes_cursor_in_subsequent_request(self):
         transport = MCPTransport("http://fake-mcp.local")
         post_side_effect = [
-            _mock_response(_build_jsonrpc(1, _init_result())),
+            _mock_response(_build_jsonrpc(1, _init_result("2025-03-26"))),
             _NOTIFY_RESP,
             _mock_response(_build_jsonrpc(2, {"tools": [{"name": "t1"}], "nextCursor": "abc123"})),
             _mock_response(_build_jsonrpc(3, {"tools": [{"name": "t2"}]})),
@@ -279,7 +286,7 @@ class TestCustomHeaders:
     def test_applies_custom_headers_from_env(self):
         transport = MCPTransport("http://fake-mcp.local")
         post_side_effect = [
-            _mock_response(_build_jsonrpc(1, _init_result())),
+            _mock_response(_build_jsonrpc(1, _init_result("2025-03-26"))),
             _NOTIFY_RESP,
             _mock_response(_build_jsonrpc(2, {"tools": []})),
         ]
@@ -302,7 +309,7 @@ class TestCustomHeaders:
     def test_ignores_invalid_json_custom_headers(self):
         transport = MCPTransport("http://fake-mcp.local")
         post_side_effect = [
-            _mock_response(_build_jsonrpc(1, _init_result())),
+            _mock_response(_build_jsonrpc(1, _init_result("2025-03-26"))),
             _NOTIFY_RESP,
             _mock_response(_build_jsonrpc(2, {"tools": []})),
         ]
@@ -315,7 +322,7 @@ class TestCustomHeaders:
     def test_no_headers_when_env_empty(self):
         transport = MCPTransport("http://fake-mcp.local")
         post_side_effect = [
-            _mock_response(_build_jsonrpc(1, _init_result())),
+            _mock_response(_build_jsonrpc(1, _init_result("2025-03-26"))),
             _NOTIFY_RESP,
             _mock_response(_build_jsonrpc(2, {"tools": []})),
         ]
@@ -334,7 +341,7 @@ class TestCustomHeaders:
 class TestServerCapabilities:
     def test_stores_capabilities_from_initialize(self):
         transport = MCPTransport("http://fake-mcp.local")
-        init_result = _init_result()
+        init_result = _init_result("2025-03-26")
         init_result["capabilities"] = {
             "tools": {"listChanged": True},
             "resources": {"subscribe": False},
@@ -352,7 +359,7 @@ class TestServerCapabilities:
 
     def test_empty_capabilities_when_omitted(self):
         transport = MCPTransport("http://fake-mcp.local")
-        init_result = _init_result()
+        init_result = _init_result("2025-03-26")
         del init_result["capabilities"]
         post_side_effect = [
             _mock_response(_build_jsonrpc(1, init_result)),
@@ -454,3 +461,290 @@ class TestContainerFixturePolicy:
         assert result["status"] == "warning"
         assert container._mcp_disabled_or_unavailable is True
         assert container._mcp_initialized is False
+
+
+# ---------------------------------------------------------------------------
+# SSE response parsing
+# ---------------------------------------------------------------------------
+
+
+class TestSSEResponseParsing:
+    def test_parse_sse_stream_with_data_lines(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = mock.MagicMock()
+        transport._connected = True
+
+        sse_lines = [
+            'event: message',
+            'data: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"t1"}]}}',
+            '',
+        ]
+        mock_resp = _mock_sse_response(sse_lines)
+        transport._session.post.return_value = mock_resp
+
+        result = transport._send_request("tools/list", {})
+        assert result["tools"][0]["name"] == "t1"
+
+    def test_parse_sse_stream_with_done_termination(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = mock.MagicMock()
+        transport._connected = True
+
+        sse_lines = [
+            'data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}',
+            'data: [DONE]',
+        ]
+        mock_resp = _mock_sse_response(sse_lines)
+        transport._session.post.return_value = mock_resp
+
+        result = transport._send_request("tools/call", {"name": "t", "arguments": {}})
+        assert result == {"ok": True}
+
+    def test_parse_sse_stream_with_empty_data_termination(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = mock.MagicMock()
+        transport._connected = True
+
+        sse_lines = [
+            'data: {"jsonrpc":"2.0","id":1,"result":{"a":1}}',
+            'data:',
+        ]
+        mock_resp = _mock_sse_response(sse_lines)
+        transport._session.post.return_value = mock_resp
+
+        result = transport._send_request("tools/call", {"name": "t", "arguments": {}})
+        assert result == {"a": 1}
+
+    def test_parse_sse_stream_returns_empty_dict_for_empty_stream(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = mock.MagicMock()
+        transport._connected = True
+
+        mock_resp = _mock_sse_response([])
+        transport._session.post.return_value = mock_resp
+
+        result = transport._send_request("tools/list", {})
+        assert result == {}
+
+    def test_parse_sse_stream_collects_multiple_results(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = mock.MagicMock()
+        transport._connected = True
+
+        sse_lines = [
+            'data: {"a":1}',
+            'data: {"b":2}',
+            'data:',
+        ]
+        mock_resp = _mock_sse_response(sse_lines)
+        transport._session.post.return_value = mock_resp
+
+        result = transport._send_request("tools/list", {})
+        assert isinstance(result, list)
+        assert result == [{"a": 1}, {"b": 2}]
+
+
+# ---------------------------------------------------------------------------
+# Session ID management
+# ---------------------------------------------------------------------------
+
+
+class TestSessionIdManagement:
+    def test_extracts_mcp_session_id_from_response_headers(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = mock.MagicMock()
+        transport._session.headers = {}
+        transport._connected = True
+
+        mock_resp = _mock_response(
+            _build_jsonrpc(1, _init_result("2025-03-26")),
+            headers={"Mcp-Session-Id": "abc-123-session"},
+        )
+        transport._session.post.return_value = mock_resp
+
+        transport._send_request("initialize", {"protocolVersion": "2025-03-26"})
+        assert transport._mcp_session_id == "abc-123-session"
+        assert transport._session.headers.get("Mcp-Session-Id") == "abc-123-session"
+
+    def test_replays_session_id_on_subsequent_requests(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = mock.MagicMock()
+        transport._session.headers = {}
+        transport._connected = True
+
+        resp1 = _mock_response(
+            _build_jsonrpc(1, _init_result("2025-03-26")),
+            headers={"Mcp-Session-Id": "session-xyz"},
+        )
+        resp2 = _mock_response(
+            _build_jsonrpc(2, {"tools": []}),
+            headers={},
+        )
+        transport._session.post.side_effect = [resp1, resp2]
+
+        transport._send_request("initialize", {"protocolVersion": "2025-03-26"})
+        transport._send_request("tools/list", {})
+
+        sent_headers = transport._session.headers
+        assert sent_headers.get("Mcp-Session-Id") == "session-xyz"
+
+    def test_does_not_overwrite_session_id_with_none(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = mock.MagicMock()
+        transport._session.headers = {"Mcp-Session-Id": "existing-id"}
+        transport._mcp_session_id = "existing-id"
+        transport._connected = True
+
+        mock_resp = _mock_response(
+            _build_jsonrpc(1, {"tools": []}),
+            headers={},
+        )
+        transport._session.post.return_value = mock_resp
+
+        transport._send_request("tools/list", {})
+        assert transport._mcp_session_id == "existing-id"
+
+
+# ---------------------------------------------------------------------------
+# Top-level isError handling
+# ---------------------------------------------------------------------------
+
+
+class TestTopLevelIsError:
+    def test_raises_on_top_level_iserror_in_send_request(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = mock.MagicMock()
+        transport._connected = True
+
+        error_response = _build_jsonrpc(1, {
+            "isError": True,
+            "error": "Something bad happened",
+        })
+        transport._session.post.return_value = _mock_response(error_response)
+
+        with pytest.raises(MCPProtocolError, match="top-level isError"):
+            transport._send_request("tools/call", {"name": "t", "arguments": {}})
+
+    def test_does_not_raise_when_iserror_is_false_top_level(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = mock.MagicMock()
+        transport._connected = True
+
+        ok_response = _build_jsonrpc(1, {"isError": False, "content": []})
+        transport._session.post.return_value = _mock_response(ok_response)
+
+        result = transport._send_request("tools/call", {"name": "t", "arguments": {}})
+        assert result == {"isError": False, "content": []}
+
+    def test_call_tool_raises_on_top_level_iserror(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = mock.MagicMock()
+        transport._connected = True
+
+        error_response = _build_jsonrpc(1, {
+            "isError": True,
+            "error": "Tool-level failure",
+        })
+        transport._session.post.return_value = _mock_response(error_response)
+
+        with pytest.raises(MCPProtocolError, match="top-level isError"):
+            transport.call_tool("bad_tool", {})
+
+
+# ---------------------------------------------------------------------------
+# Notification handling (HTTP 202 / non-2xx)
+# ---------------------------------------------------------------------------
+
+
+class TestNotificationHandling:
+    def test_notification_accepts_202_status(self, caplog):
+        caplog.set_level(logging.INFO)
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = mock.MagicMock()
+        transport._connected = True
+
+        mock_resp = mock.MagicMock()
+        mock_resp.status_code = 202
+        mock_resp.text = ""
+        transport._session.post.return_value = mock_resp
+
+        transport._send_notification("notifications/initialized")
+
+        assert "accepted (202)" in caplog.text
+
+    def test_notification_logs_warning_on_non_2xx(self, caplog):
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = mock.MagicMock()
+        transport._connected = True
+
+        mock_resp = mock.MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.text = "Internal error"
+        transport._session.post.return_value = mock_resp
+
+        transport._send_notification("notifications/initialized")
+
+        assert "non-2xx" in caplog.text
+
+    def test_notification_sent_with_no_id_field(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        post_side_effect = [
+            _mock_response(_build_jsonrpc(1, _init_result("2025-03-26"))),
+            _mock_response({"jsonrpc": "2.0"}, status=202),
+            _mock_response(_build_jsonrpc(2, {"tools": []})),
+        ]
+        mock_sess = _patch_and_connect(transport, post_side_effect)
+
+        notification_call = None
+        for call_args in mock_sess.post.call_args_list:
+            payload = call_args[1]["json"]
+            if payload.get("method") == "notifications/initialized":
+                notification_call = payload
+                break
+        assert notification_call is not None
+        assert "id" not in notification_call
+
+
+# ---------------------------------------------------------------------------
+# Accept header presence
+# ---------------------------------------------------------------------------
+
+
+class TestAcceptHeader:
+    def test_accept_header_set_on_session(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        post_side_effect = [
+            _mock_response(_build_jsonrpc(1, _init_result("2025-03-26"))),
+            _NOTIFY_RESP,
+            _mock_response(_build_jsonrpc(2, {"tools": []})),
+        ]
+
+        with mock.patch("calendar_planner.app.mcp_transport.requests.Session") as sess_cls:
+            mock_sess = mock.MagicMock()
+            mock_sess.headers = {}
+            mock_sess.post.side_effect = post_side_effect
+            sess_cls.return_value = mock_sess
+
+            transport.connect()
+
+            headers = mock_sess.headers
+            assert "Accept" in headers
+            assert "text/event-stream" in headers["Accept"]
+            assert "application/json" in headers["Accept"]
+
+    def test_accept_header_present_in_fallback_session_creation(self):
+        transport = MCPTransport("http://fake-mcp.local")
+        transport._session = None
+        transport._connected = True
+
+        mock_resp = _mock_response(_build_jsonrpc(1, {"tools": []}))
+        with mock.patch("calendar_planner.app.mcp_transport.requests.Session") as sess_cls:
+            mock_sess = mock.MagicMock()
+            mock_sess.headers = {}
+            mock_sess.post.return_value = mock_resp
+            sess_cls.return_value = mock_sess
+
+            transport._send_request("tools/list", {})
+
+            assert "Accept" in mock_sess.headers
+            assert "text/event-stream" in mock_sess.headers["Accept"]

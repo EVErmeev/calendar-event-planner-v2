@@ -141,7 +141,7 @@ class MainWindow:
             return
 
         stage_1_status = self.controller.get_stage_status(0)
-        if stage_1_status not in ("success", "success_with_warnings"):
+        if stage_1_status != "success":
             messagebox.showerror(
                 "Ошибка этапа 1",
                 "Подключения не проверены или проверка завершилась с ошибкой.\n"
@@ -250,6 +250,9 @@ class MainWindow:
         except Exception as exc:
             self.info_text.insert(tk.END, f"  ОШИБКА этапа 3: {exc}\n")
             self.controller.set_stage_error("stage_3", str(exc))
+            self._update_stage_indicators()
+            self._show_stage_content()
+            return
 
         # --- Stage 4: Participant Resolution ---
         self.info_text.insert(tk.END, "[Этап 4] Определение участников...\n")
@@ -303,6 +306,13 @@ class MainWindow:
                 cp = participants_map.get(candidate.candidate_id)
                 items = self.controller._enrichment.get(candidate.candidate_id, [])
                 draft = builder.build_from_candidate(candidate, cp, items)
+
+                existing_match = matches.get(candidate.candidate_id)
+                if existing_match is not None:
+                    draft.calendar_matches.append(existing_match)
+                    draft.match_status = "checked"
+                    draft.match_input_hash = draft.compute_input_hash()
+
                 drafts.append(draft)
 
             self.controller.set_drafts(drafts)
@@ -411,23 +421,36 @@ class MainWindow:
         self._stage_frames[2] = frame
 
     def _show_stage_4_content(self) -> None:
+        from calendar_planner.app.settings import settings
         from calendar_planner.ui.stages.stage4_participants import (
             Stage4ParticipantsFrame,
         )
 
         participants = self.controller._participants
 
-        frame = Stage4ParticipantsFrame(self.content_frame, participants)
+        frame = Stage4ParticipantsFrame(
+            self.content_frame,
+            participants,
+            performer_domains=settings.PERFORMER_EMAIL_DOMAINS,
+            fuzzy_threshold=settings.CONTACT_FUZZY_THRESHOLD,
+        )
         frame.pack(fill=tk.BOTH, expand=True)
         self._stage_frames[3] = frame
 
     def _show_stage_5_content(self) -> None:
+        from calendar_planner.app.settings import settings
         from calendar_planner.ui.stages.stage5_enrichment import Stage5EnrichmentFrame
 
         enrichment = self.controller._enrichment
         candidates_by_id = {c.candidate_id: c for c in self.controller.get_all_candidates()}
 
-        frame = Stage5EnrichmentFrame(self.content_frame, enrichment, candidates_by_id)
+        frame = Stage5EnrichmentFrame(
+            self.content_frame,
+            enrichment,
+            candidates_by_id,
+            performer_domains=settings.PERFORMER_EMAIL_DOMAINS,
+            fuzzy_threshold=settings.CONTACT_FUZZY_THRESHOLD,
+        )
         frame.pack(fill=tk.BOTH, expand=True)
         self._stage_frames[4] = frame
 
@@ -436,8 +459,9 @@ class MainWindow:
 
         drafts = self.controller.get_drafts()
         on_recheck = self._make_recheck_callback()
+        on_create = self._make_create_callback()
 
-        frame = Stage6CreationFrame(self.content_frame, drafts, on_recheck=on_recheck)
+        frame = Stage6CreationFrame(self.content_frame, drafts, on_recheck=on_recheck, on_create=on_create)
         frame.pack(fill=tk.BOTH, expand=True)
         self._stage_frames[5] = frame
 
@@ -493,6 +517,32 @@ class MainWindow:
             draft.match_input_hash = draft.compute_input_hash()
 
         return recheck_draft
+
+    def _make_create_callback(self):
+        def create_callback(draft, frame=None):
+            if self.container is None:
+                messagebox.showwarning("Ошибка", "Контейнер не инициализирован")
+                return
+
+            from calendar_planner.calendar.creator import EventCreator
+
+            calendar_gw = self.container.get_calendar_gateway()
+            creator = EventCreator(calendar_gw, dry_run=True)
+            result = creator.create_one(draft)
+            payload = creator.build_payload(draft)
+            errors = ", ".join(result.get("errors", [])) if result.get("errors") else ""
+            frame_obj = frame if frame is not None else self._stage_frames.get(5)
+            if frame_obj is not None:
+                frame_obj.show_creation_result(
+                    draft_id=draft.draft_id,
+                    subject=draft.subject.value or "Без темы",
+                    status=result.get("status", "error"),
+                    event_id=result.get("event_id", ""),
+                    url=result.get("url", ""),
+                    errors=errors,
+                )
+
+        return create_callback
 
     def _check_connections(self) -> None:
         if self.container is None:

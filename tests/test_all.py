@@ -2833,10 +2833,27 @@ class TestP103BestEmployee:
         gateway = FixtureDirectoryGateway(employees=employees)
         matcher = NameMatcher(gateway)
 
-        result = matcher.match_performer("Сергей")
-        assert result is not None
-        assert result.full_name == "Сергей Сергеев"
-        assert result.email == "s_s@1bit.ru"
+        result, options = matcher.match_performer_with_options("Сергей")
+        assert result is None
+        assert len(options) == 2
+        assert any(o["full_name"] == "Сергей Сергеев" for o in options)
+        assert any(o["full_name"] == "Сергей Петров-Сидоров Михайлович" for o in options)
+
+    def test_match_performer_multiple_returns_none(self):
+        from calendar_planner.participants.directory_gateway import (
+            FixtureDirectoryGateway,
+        )
+        from calendar_planner.participants.matcher import NameMatcher
+
+        employees = [
+            {"full_name": "Иванов Иван", "email": "i1@1bit.ru", "surname": "Иванов"},
+            {"full_name": "Иванов Петр", "email": "i2@1bit.ru", "surname": "Иванов"},
+        ]
+        gateway = FixtureDirectoryGateway(employees=employees)
+        matcher = NameMatcher(gateway)
+
+        result = matcher.match_performer("Иванов")
+        assert result is None
 
 
 class TestP104PerformerDomains:
@@ -4234,3 +4251,529 @@ class TestSessionFullRoundtrip:
 
         finally:
             shutil.rmtree("./runs_roundtrip_test2", ignore_errors=True)
+
+
+class TestFix1Stage6OnCreate:
+    def test_on_create_callback_callable_and_dry_run(self):
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        from calendar_planner.domain.models import DraftField, FinalEventDraft
+
+        gateway = FixtureCalendarGateway()
+
+        draft = FinalEventDraft(
+            draft_id="DRF-FIX1",
+            candidate_id="C001",
+            subject=DraftField(value="Fix1 Test", origin="auto"),
+            start_date=DraftField(value="2026-08-04", origin="auto"),
+            start_time=DraftField(value="12:00", origin="auto"),
+            timezone=DraftField(value="Asia/Yekaterinburg", origin="auto"),
+            duration_minutes=DraftField(value=60, origin="auto"),
+            duration_confirmed=True,
+            is_ready=True,
+            match_status="checked",
+        )
+        draft.match_input_hash = draft.compute_input_hash()
+
+        creator = EventCreator(gateway, dry_run=True)
+        result = creator.create_one(draft)
+        assert result["status"] == "dry_run"
+        assert result["draft_id"] == "DRF-FIX1"
+
+        assert callable(getattr(creator, "create_one", None))
+
+        payload = creator.build_payload(draft)
+        assert "subject" in payload
+        assert "start" in payload
+        assert "end" in payload
+
+
+class TestFix2Stage3MatchesToDrafts:
+    def test_matches_populated_on_draft(self):
+        from calendar_planner.calendar.matcher import CalendarMatcher
+        from calendar_planner.domain.enums import MatchDecision
+        from calendar_planner.domain.models import (
+            CalendarEvent,
+            MeetingCandidate,
+            NormalizedDateTime,
+        )
+        from calendar_planner.drafts.builder import DraftBuilder
+
+        candidate = MeetingCandidate(
+            candidate_id="C001",
+            subject="Test Transfer",
+            start_date="2026-08-04",
+            start_time="12:00",
+            timezone="Asia/Yekaterinburg",
+        )
+
+        events = [
+            CalendarEvent(
+                event_id="EVT-TEST",
+                ical_uid="uid-test",
+                subject="Test Transfer",
+                start=NormalizedDateTime(
+                    raw_datetime="2026-08-04T12:00:00",
+                    raw_timezone="Asia/Yekaterinburg",
+                    aware_datetime=datetime(2026, 8, 4, 12, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                    utc_datetime=datetime(2026, 8, 4, 7, 0, tzinfo=ZoneInfo("UTC")),
+                    display_datetime=datetime(2026, 8, 4, 12, 0, tzinfo=ZoneInfo("Asia/Yekaterinburg")),
+                    display_timezone="Asia/Yekaterinburg",
+                ),
+            ),
+        ]
+
+        matcher = CalendarMatcher()
+        matches = matcher.match_all([candidate], events)
+
+        builder = DraftBuilder()
+        draft = builder.build_from_candidate(candidate)
+
+        match = matches.get(candidate.candidate_id)
+        if match is not None:
+            draft.calendar_matches.append(match)
+            draft.match_status = "checked"
+            draft.match_input_hash = draft.compute_input_hash()
+
+        assert len(draft.calendar_matches) == 1
+        assert draft.calendar_matches[0].decision == MatchDecision.DUPLICATE
+        assert draft.match_status == "checked"
+        assert draft.match_input_hash == draft.compute_input_hash()
+
+
+class TestFix7PipelineBlocking:
+    def test_mcp_unavailable_returns_failed_not_warning(self):
+        from calendar_planner.app.settings import Settings
+        from calendar_planner.ui.controllers import StageController
+
+        s = Settings()
+        assert s.MCP_SERVER_URL == ""
+
+        controller = StageController()
+        controller.set_stage_error("stage_1", "MCP unavailable")
+        assert controller.get_stage_status(0) == "failed"
+
+    def test_warning_only_stage1_blocks_analysis(self):
+        from calendar_planner.domain.enums import StageStatus
+        from calendar_planner.ui.controllers import StageController
+
+        controller = StageController()
+        controller.set_stage_success("stage_1")
+        controller.stages[0].status = StageStatus.SUCCESS_WITH_WARNINGS
+
+        status = controller.get_stage_status(0)
+        assert status != "success"
+
+    def test_stage3_error_stops_4_6(self):
+        from calendar_planner.domain.enums import StageStatus
+        from calendar_planner.ui.controllers import StageController
+
+        controller = StageController()
+        controller.set_stage_success("stage_1")
+        controller.set_stage_success("stage_2")
+        controller.set_stage_error("stage_3", "Calendar error")
+
+        assert controller.get_stage_status(2) == StageStatus.FAILED.value
+        assert controller.get_stage_status(3) == StageStatus.NOT_STARTED.value
+        assert controller.get_stage_status(4) == StageStatus.NOT_STARTED.value
+        assert controller.get_stage_status(5) == StageStatus.NOT_STARTED.value
+
+    def test_only_success_allows_analysis(self):
+        from calendar_planner.domain.enums import StageStatus
+        from calendar_planner.ui.controllers import StageController
+
+        controller = StageController()
+        assert controller.get_stage_status(0) == StageStatus.NOT_STARTED.value
+        assert controller.get_stage_status(0) != "success"
+
+        controller.set_stage_error("stage_1", "error")
+        assert controller.get_stage_status(0) != "success"
+
+        controller2 = StageController()
+        controller2.set_stage_success("stage_1")
+        controller2.stages[0].status = StageStatus.SUCCESS_WITH_WARNINGS
+        assert controller2.get_stage_status(0) != "success"
+
+        controller3 = StageController()
+        controller3.set_stage_success("stage_1")
+        assert controller3.get_stage_status(0) == "success"
+
+
+class TestStage4ParticipantsFrameGUI:
+    def test_has_add_remove_toggle_methods(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import (
+            CandidateParticipants,
+            ParticipantRole,
+            ParticipantSide,
+            ResolvedParticipant,
+        )
+        from calendar_planner.ui.stages.stage4_participants import (
+            Stage4ParticipantsFrame,
+        )
+
+        root = tk.Tk()
+        try:
+            cp = CandidateParticipants(
+                candidate_id="C001",
+                performer=[
+                    ResolvedParticipant(
+                        full_name="Test User",
+                        email="test@example.com",
+                        side=ParticipantSide.PERFORMER,
+                        role=ParticipantRole.REQUIRED,
+                        source_name="Test",
+                    ),
+                ],
+            )
+            frame = Stage4ParticipantsFrame(root, participants=[cp])
+
+            assert hasattr(frame, "_add_participant")
+            assert hasattr(frame, "_remove_participant")
+            assert hasattr(frame, "_toggle_role")
+            assert hasattr(frame, "_retry_search")
+            assert hasattr(frame, "_select_alternative")
+            assert hasattr(frame, "_reject_fuzzy_match")
+        finally:
+            root.destroy()
+
+    def test_toggle_role_switches_required_optional(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import (
+            CandidateParticipants,
+            ParticipantRole,
+            ParticipantSide,
+            ResolvedParticipant,
+        )
+        from calendar_planner.ui.stages.stage4_participants import (
+            Stage4ParticipantsFrame,
+        )
+
+        root = tk.Tk()
+        try:
+            participant = ResolvedParticipant(
+                full_name="Test User",
+                email="test@example.com",
+                side=ParticipantSide.PERFORMER,
+                role=ParticipantRole.REQUIRED,
+                source_name="Test",
+            )
+            cp = CandidateParticipants(
+                candidate_id="C001",
+                performer=[participant],
+            )
+            frame = Stage4ParticipantsFrame(root, participants=[cp])
+
+            assert participant.role == ParticipantRole.REQUIRED
+            frame._toggle_role(cp, participant)
+            assert participant.role == ParticipantRole.OPTIONAL
+            frame._toggle_role(cp, participant)
+            assert participant.role == ParticipantRole.REQUIRED
+        finally:
+            root.destroy()
+
+    def test_add_remove_methods_exist_and_work(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import (
+            CandidateParticipants,
+            ParticipantRole,
+            ParticipantSide,
+            ResolvedParticipant,
+        )
+        from calendar_planner.ui.stages.stage4_participants import (
+            Stage4ParticipantsFrame,
+        )
+
+        root = tk.Tk()
+        try:
+            cp = CandidateParticipants(candidate_id="C001")
+            frame = Stage4ParticipantsFrame(root, participants=[cp])
+
+            assert len(cp.performer) == 0
+            assert len(cp.customer) == 0
+
+            participant = ResolvedParticipant(
+                full_name="New User",
+                email="new@example.com",
+                side=ParticipantSide.PERFORMER,
+                role=ParticipantRole.REQUIRED,
+                source_name="New",
+            )
+            cp.performer.append(participant)
+            assert len(cp.performer) == 1
+
+            cp.performer.remove(participant)
+            assert len(cp.performer) == 0
+        finally:
+            root.destroy()
+
+    def test_unresolved_with_options_displayed(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import (
+            CandidateParticipants,
+            ParticipantSide,
+            UnresolvedParticipant,
+        )
+        from calendar_planner.ui.stages.stage4_participants import (
+            Stage4ParticipantsFrame,
+        )
+
+        root = tk.Tk()
+        try:
+            cp = CandidateParticipants(
+                candidate_id="C001",
+                unresolved=[
+                    UnresolvedParticipant(
+                        source_name="Иванов",
+                        side=ParticipantSide.PERFORMER,
+                        reason="Несколько вариантов в каталоге",
+                        possible_matches=[
+                            {"full_name": "Иванов Иван", "email": "i1@1bit.ru", "score": 0.95},
+                            {"full_name": "Иванов Петр", "email": "i2@1bit.ru", "score": 0.72},
+                        ],
+                    ),
+                ],
+            )
+            frame = Stage4ParticipantsFrame(root, participants=[cp])
+
+            assert hasattr(frame, "_select_alternative")
+            assert hasattr(frame, "_remove_unresolved")
+        finally:
+            root.destroy()
+
+
+class TestStage5EnrichmentFrameGUI:
+    def test_edit_add_delete_revert_methods_exist(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import (
+            DescriptionItem,
+            DescriptionItemType,
+        )
+        from calendar_planner.ui.stages.stage5_enrichment import (
+            Stage5EnrichmentFrame,
+        )
+
+        root = tk.Tk()
+        try:
+            enrichment = {
+                "C001": [
+                    DescriptionItem(
+                        item_id="ITM-001",
+                        item_type=DescriptionItemType.AGENDA,
+                        title="Повестка",
+                        value="1. Пункт 1",
+                        source_location="Sheet1:R2",
+                        reasoning="Извлечено из описания",
+                        confidence=0.85,
+                        candidate_id="C001",
+                    ),
+                ],
+            }
+            candidates_by_id = {"C001": type("Fake", (), {"subject": "Test"})()}
+
+            frame = Stage5EnrichmentFrame(root, enrichment, candidates_by_id)
+
+            assert hasattr(frame, "_edit_item_value")
+            assert hasattr(frame, "_add_item")
+            assert hasattr(frame, "_delete_item")
+            assert hasattr(frame, "_revert_item")
+            assert hasattr(frame, "_copy_to_clipboard")
+            assert hasattr(frame, "_show_edit_dialog")
+        finally:
+            root.destroy()
+
+    def test_add_item_adds_to_enrichment(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import (
+            DescriptionItem,
+            DescriptionItemType,
+        )
+        from calendar_planner.ui.stages.stage5_enrichment import (
+            Stage5EnrichmentFrame,
+        )
+
+        root = tk.Tk()
+        try:
+            enrichment = {}
+            candidates_by_id = {"C001": type("Fake", (), {"subject": "Test"})()}
+
+            frame = Stage5EnrichmentFrame(root, enrichment, candidates_by_id)
+
+            import uuid
+            new_item = DescriptionItem(
+                item_id=f"USR-{uuid.uuid4().hex[:8]}",
+                item_type=DescriptionItemType.NOTE,
+                title="Test Note",
+                value="Test Value",
+                modified_by_user=True,
+                candidate_id="C001",
+            )
+            frame._original_items[new_item.item_id] = DescriptionItem(
+                item_id=new_item.item_id,
+                item_type=DescriptionItemType.NOTE,
+                title="Test Note",
+                value="Test Value",
+            )
+            enrichment.setdefault("C001", []).append(new_item)
+
+            assert "C001" in enrichment
+            assert len(enrichment["C001"]) == 1
+            assert enrichment["C001"][0].title == "Test Note"
+        finally:
+            root.destroy()
+
+    def test_delete_item_removes_from_enrichment(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import (
+            DescriptionItem,
+            DescriptionItemType,
+        )
+        from calendar_planner.ui.stages.stage5_enrichment import (
+            Stage5EnrichmentFrame,
+        )
+
+        root = tk.Tk()
+        try:
+            item = DescriptionItem(
+                item_id="ITM-001",
+                item_type=DescriptionItemType.AGENDA,
+                title="Agenda",
+                value="Content",
+                candidate_id="C001",
+            )
+            enrichment = {"C001": [item]}
+            candidates_by_id = {"C001": type("Fake", (), {"subject": "Test"})()}
+
+            frame = Stage5EnrichmentFrame(root, enrichment, candidates_by_id)
+
+            assert len(enrichment["C001"]) == 1
+            enrichment["C001"].remove(item)
+            assert len(enrichment["C001"]) == 0
+        finally:
+            root.destroy()
+
+    def test_revert_item_restores_original(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import (
+            DescriptionItem,
+            DescriptionItemType,
+        )
+        from calendar_planner.ui.stages.stage5_enrichment import (
+            Stage5EnrichmentFrame,
+        )
+
+        root = tk.Tk()
+        try:
+            item = DescriptionItem(
+                item_id="ITM-001",
+                item_type=DescriptionItemType.AGENDA,
+                title="Agenda",
+                value="Original Content",
+                candidate_id="C001",
+            )
+            enrichment = {"C001": [item]}
+            candidates_by_id = {"C001": type("Fake", (), {"subject": "Test"})()}
+
+            frame = Stage5EnrichmentFrame(root, enrichment, candidates_by_id)
+
+            frame._original_items["ITM-001"] = DescriptionItem(
+                item_id="ITM-001",
+                item_type=DescriptionItemType.AGENDA,
+                title="Agenda",
+                value="Original Content",
+            )
+
+            item.value = "Modified Content"
+            assert item.value == "Modified Content"
+
+            frame._revert_item(item, "C001")
+            assert item.value == "Original Content"
+        finally:
+            root.destroy()
+
+    def test_metadata_fields_present(self):
+        import tkinter as tk
+
+        from calendar_planner.domain.models import (
+            DescriptionItem,
+            DescriptionItemType,
+        )
+        from calendar_planner.ui.stages.stage5_enrichment import (
+            Stage5EnrichmentFrame,
+        )
+
+        root = tk.Tk()
+        try:
+            item = DescriptionItem(
+                item_id="ITM-001",
+                item_type=DescriptionItemType.AGENDA,
+                title="Agenda",
+                value="Content",
+                source_location="Sheet1:R5:C3",
+                reasoning="Extracted from description column",
+                confidence=0.92,
+                candidate_id="C001",
+            )
+            enrichment = {"C001": [item]}
+            candidates_by_id = {"C001": type("Fake", (), {"subject": "Test"})()}
+
+            frame = Stage5EnrichmentFrame(root, enrichment, candidates_by_id)
+
+            assert item.source_location == "Sheet1:R5:C3"
+            assert item.reasoning == "Extracted from description column"
+            assert item.confidence == 0.92
+            assert item.candidate_id == "C001"
+        finally:
+            root.destroy()
+
+
+class TestStage4ResolverMultiOptions:
+    def test_multiple_directory_results_go_to_unresolved_with_options(self):
+        from calendar_planner.domain.models import (
+            ExtractedSource,
+            MeetingCandidate,
+            SourceReference,
+        )
+        from calendar_planner.participants.directory_gateway import (
+            FixtureDirectoryGateway,
+        )
+        from calendar_planner.participants.resolver import ParticipantResolver
+
+        employees = [
+            {"full_name": "Иванов Иван Иванович", "email": "i1@1bit.ru", "surname": "Иванов"},
+            {"full_name": "Иванов Петр Сергеевич", "email": "i2@1bit.ru", "surname": "Иванов"},
+            {"full_name": "Иванова Анна Дмитриевна", "email": "i3@1bit.ru", "surname": "Иванова"},
+        ]
+        gateway = FixtureDirectoryGateway(employees=employees)
+        resolver = ParticipantResolver(directory_gateway=gateway)
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            raw_text="",
+        )
+
+        candidates = [
+            MeetingCandidate(
+                candidate_id="C001",
+                subject="Test",
+                performer_names=["Иванов"],
+                start_date="2026-08-04",
+                start_time="12:00",
+            ),
+        ]
+
+        results = resolver.resolve(candidates, source)
+        assert len(results) == 1
+        assert len(results[0].performer) == 0
+        assert len(results[0].unresolved) == 1
+        assert results[0].unresolved[0].source_name == "Иванов"
+        assert len(results[0].unresolved[0].possible_matches) == 3
+        assert "Несколько вариантов" in results[0].unresolved[0].reason

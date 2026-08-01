@@ -335,30 +335,63 @@ class TestControlScenario:
         assert end_date is not None
         assert end_time is not None
 
+        # ── Apply natural pipeline flow after Stage 3 comparison ──────
+        # 1. Сначала подтверждаем длительность (editor помечает матч stale).
+        # 2. Затем переносим результат сравнения из Stage 3 в черновик:
+        #    DUPLICATE → calendar_matches заполнен, черновик НЕ готов к созданию;
+        #    NEW       → совпадений нет, черновик полностью готов.
+        # 3. Никаких ручных принудительных draft.is_ready = True — готовность
+        #    вытекает из результата матчинга.
         for draft in drafts:
             if not draft.duration_confirmed:
                 editor.set_duration(draft, 60)
-            if draft.match_status not in ("checked",):
-                draft.match_status = "checked"
-                draft.match_input_hash = draft.compute_input_hash()
-            draft.is_ready = True
 
-        ready = [d for d in drafts if d.duration_confirmed]
-        assert len(ready) == 8
+            match = matches.get(draft.candidate_id)
+            if match is not None and match.decision == MatchDecision.DUPLICATE:
+                draft.calendar_matches = [match]
+                draft.is_ready = False
+            else:
+                draft.is_ready = True
 
+            draft.match_status = "checked"
+            draft.match_input_hash = draft.compute_input_hash()
+
+        # Точные счётчики: 7 дубликатов + 1 новая встреча
+        duplicate_count = sum(
+            1 for d in drafts
+            if d.match_status == "checked" and len(d.calendar_matches) > 0
+        )
+        new_count = len(drafts) - duplicate_count
+        assert duplicate_count == 7, f"Expected 7 DUPLICATE, got {duplicate_count}"
+        assert new_count == 1, f"Expected 1 NEW, got {new_count}"
+
+        assert all(d.duration_confirmed for d in drafts)
+        assert all(d.match_status == "checked" for d in drafts)
+
+        # ── STAGE 6: validate + dry-run create (по всем 8 черновикам) ─
         all_creation_results = []
-        for d in ready:
-            result = creator.create_one(d)
-            all_creation_results.append(result)
+        for d in drafts:
+            all_creation_results.append(creator.create_one(d))
 
         assert len(all_creation_results) == 8
 
-        dry_runs = [r for r in all_creation_results if r.get("status") == "dry_run"]
-        invalid = [r for r in all_creation_results if r.get("status") == "invalid"]
-        assert len(dry_runs) > 0
-        assert len(invalid) == 0, f"Unexpected invalid drafts: {invalid}"
+        invalid_count = sum(1 for r in all_creation_results if r["status"] == "invalid")
+        dry_run_count = sum(1 for r in all_creation_results if r["status"] == "dry_run")
+        assert invalid_count == 7, f"Expected 7 invalid (duplicate blocked), got {invalid_count}"
+        assert dry_run_count == 1, f"Expected 1 dry_run (new), got {dry_run_count}"
 
-        payload = creator.build_payload(ready[0])
+        # Каждый заблокированный черновик обязан иметь ошибку о дубликате
+        for r in all_creation_results:
+            if r["status"] == "invalid":
+                assert any(
+                    "Duplicate found in calendar" in e for e in r["errors"]
+                ), f"No duplicate error in {r['draft_id']}: {r['errors']}"
+
+        # Новая встреча — единственная, прошедшая до stage создания
+        new_draft = next(d for d in drafts if d.candidate_id == new_candidate_id)
+        assert new_draft.is_ready is True, "NEW draft must be ready for creation"
+
+        payload = creator.build_payload(new_draft)
         payload_errors = creator.validate_payload(payload)
         assert len(payload_errors) == 0
 
@@ -396,7 +429,7 @@ class TestControlScenario:
             StageState(name="drafts", status=StageStatus.SUCCESS,
                        data={"drafts": len(drafts)}),
             StageState(name="creation", status=StageStatus.SUCCESS,
-                       data={"dry_runs": len(dry_runs), "real_events": 0}),
+                       data={"dry_runs": dry_run_count, "real_events": 0}),
         ]
         session.candidates_json = json.dumps(
             [c.to_dict() for c in all_candidates], ensure_ascii=False
@@ -436,7 +469,7 @@ class TestControlScenario:
         print(
             "\nCONTROL SCENARIO PASSED: "
             "8 candidates (7 DUPLICATE + 1 NEW), "
-            f"{len(dry_runs)} dry-run drafts, 0 real events, "
+            f"{dry_run_count} dry-run drafts, 0 real events, "
             "session saved & restored"
         )
 

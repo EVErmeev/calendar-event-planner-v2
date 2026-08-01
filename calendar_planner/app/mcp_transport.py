@@ -10,7 +10,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_PROTOCOL_VERSIONS = ["2025-03-26", "2024-11-05"]
+SUPPORTED_PROTOCOL_VERSIONS = ["2025-03-26"]
 
 
 class MCPProtocolError(Exception):
@@ -30,6 +30,7 @@ class MCPTransport:
         self._server_capabilities: dict = {}
         self._protocol_version: str | None = None
         self._server_name: str = "unknown"
+        self._mcp_session_id: str | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -45,7 +46,10 @@ class MCPTransport:
             }
 
         self._session = requests.Session()
-        self._session.headers.update({"Content-Type": "application/json"})
+        self._session.headers.update({
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        })
         self._apply_custom_headers()
 
         try:
@@ -57,7 +61,7 @@ class MCPTransport:
             self._server_name = init_result.get("serverInfo", {}).get("name", "unknown")
 
             # --- 2. version negotiation ---
-            server_version = init_result.get("protocolVersion", "2024-11-05")
+            server_version = init_result.get("protocolVersion", "2025-03-26")
             self._negotiate_version(server_version)
 
             # --- 3. initialized notification ---
@@ -123,6 +127,13 @@ class MCPTransport:
                 "name": tool_name,
                 "arguments": arguments,
             })
+
+            # --- top-level isError handling ---
+            if isinstance(result, dict) and result.get("isError") is True:
+                raise MCPProtocolError(
+                    f"Tool '{tool_name}' returned top-level isError: "
+                    f"{result.get('error', 'Unknown error')}"
+                )
 
             # --- isError handling ---
             if isinstance(result, dict):
@@ -232,7 +243,10 @@ class MCPTransport:
 
         if self._session is None:
             self._session = requests.Session()
-            self._session.headers.update({"Content-Type": "application/json"})
+            self._session.headers.update({
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            })
 
         response = self._session.post(
             self.server_url,
@@ -241,15 +255,69 @@ class MCPTransport:
         )
         response.raise_for_status()
 
-        data = response.json()
+        self._extract_mcp_session_id(response)
 
-        if "error" in data:
+        content_type = response.headers.get("Content-Type", "")
+        if "text/event-stream" in content_type:
+            data = self._parse_sse_stream(response)
+        else:
+            data = response.json()
+
+        if isinstance(data, dict) and "error" in data:
             error_info = data["error"]
             raise MCPProtocolError(
                 f"MCP error {error_info.get('code', '?')}: {error_info.get('message', 'Unknown error')}"
             )
 
-        return data.get("result", data)
+        if isinstance(data, dict):
+            result = data.get("result", data)
+        else:
+            result = data
+
+        if isinstance(result, dict) and result.get("isError") is True:
+            raise MCPProtocolError(
+                f"MCP tool returned top-level isError: {result.get('error', 'Unknown error')}"
+            )
+
+        return result
+
+    def _extract_mcp_session_id(self, response: requests.Response) -> None:
+        session_id = response.headers.get("Mcp-Session-Id")
+        if session_id and session_id != self._mcp_session_id:
+            self._mcp_session_id = session_id
+            if self._session is not None:
+                self._session.headers.update({"Mcp-Session-Id": session_id})
+            logger.debug("Extracted Mcp-Session-Id: %s", session_id)
+
+    def _parse_sse_stream(self, response: requests.Response) -> Any:
+        results: list[Any] = []
+        current_event: str | None = None
+        for line in response.iter_lines(decode_unicode=True):
+            if line is None:
+                continue
+            if line.startswith("event:"):
+                current_event = line[len("event:"):].strip()
+                continue
+            if line.startswith("data:"):
+                data_str = line[len("data:"):].strip()
+                if not data_str or data_str == "[DONE]":
+                    break
+                try:
+                    parsed = json.loads(data_str)
+                except json.JSONDecodeError:
+                    logger.warning("SSE: failed to JSON-decode data line: %s", data_str[:200])
+                    continue
+                if current_event == "message" and isinstance(parsed, dict) and "result" in parsed:
+                    return parsed
+                results.append(parsed)
+                continue
+            if line == "":
+                current_event = None
+        if not results:
+            return {}
+        if len(results) == 1:
+            return results[0]
+        return results
 
     def _send_notification(self, method: str, params: dict | None = None) -> None:
         """Send a JSON-RPC notification (no 'id' field, no response expected)."""
@@ -262,50 +330,40 @@ class MCPTransport:
         if params is not None:
             payload["params"] = params
         try:
-            self._session.post(
+            response = self._session.post(
                 self.server_url,
                 json=payload,
                 timeout=15,
             )
+            if response.status_code == 202:
+                logger.info("Notification %s accepted (202)", method)
+            elif response.status_code >= 300:
+                logger.warning(
+                    "Notification %s returned non-2xx status %d: %s",
+                    method, response.status_code, response.text[:500],
+                )
         except Exception:
             logger.warning("Failed to send notification %s", method, exc_info=True)
 
     def _send_initialize(self) -> dict:
-        """Try each supported protocol version until one succeeds."""
-        last_error: Exception | None = None
-        for version in SUPPORTED_PROTOCOL_VERSIONS:
-            try:
-                result = self._send_request("initialize", {
-                    "protocolVersion": version,
-                    "capabilities": {},
-                    "clientInfo": {
-                        "name": "calendar-event-planner-v2",
-                        "version": "2.0.0",
-                    },
-                })
-                return result
-            except Exception as exc:
-                last_error = exc
-                logger.debug("initialize with version %s failed: %s", version, exc)
-        raise MCPProtocolError(
-            f"Failed to negotiate MCP protocol version. "
-            f"Supported: {SUPPORTED_PROTOCOL_VERSIONS}. "
-            f"Last error: {last_error}"
-        )
+        return self._send_request("initialize", {
+            "protocolVersion": SUPPORTED_PROTOCOL_VERSIONS[0],
+            "capabilities": {},
+            "clientInfo": {
+                "name": "calendar-event-planner-v2",
+                "version": "2.0.0",
+            },
+        })
 
     def _negotiate_version(self, server_version: str) -> None:
         if server_version in SUPPORTED_PROTOCOL_VERSIONS:
             self._protocol_version = server_version
             logger.debug("Negotiated protocol version: %s", server_version)
-        elif any(server_version.startswith(v) for v in SUPPORTED_PROTOCOL_VERSIONS):
-            self._protocol_version = server_version
-            logger.debug("Negotiated protocol version (prefix match): %s", server_version)
         else:
-            logger.warning(
-                "Server protocol version '%s' not in supported list %s; using anyway",
-                server_version, SUPPORTED_PROTOCOL_VERSIONS,
+            raise MCPProtocolError(
+                f"Server protocol version '{server_version}' is not supported. "
+                f"This client only supports: {SUPPORTED_PROTOCOL_VERSIONS}"
             )
-            self._protocol_version = server_version
 
     def _discover_tools(self) -> list[dict]:
         """Fetch tools/list with pagination support."""

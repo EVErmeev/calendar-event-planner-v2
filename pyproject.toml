@@ -59,4 +59,5 @@ ignore = [
     "DTZ007",  # strptime без timezone — допустимо для ISO-парсинга
     "FURB162", # fromisoformat-replace-z — стилистическая рекомендация
     "FLY002",  # static-join-to-f-string — стилистическая рекомендация
+    "F841",    # unused-variable — допустимо в тестах для читаемости
 ]

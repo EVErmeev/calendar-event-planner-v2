@@ -42,17 +42,23 @@ class ParticipantResolver:
             cp = CandidateParticipants(candidate_id=candidate.candidate_id)
 
             for name in candidate.performer_names:
-                matched = self.name_matcher.match_performer(name)
+                matched, options = self.name_matcher.match_performer_with_options(name)
                 if matched:
                     matched.role = ParticipantRole.REQUIRED
                     cp.performer.append(matched)
-                elif name.strip():
-                    employee_results = self.directory.search(name) if self.directory and self.directory.is_available() else []
+                elif options:
                     cp.unresolved.append(UnresolvedParticipant(
                         source_name=name,
                         side=ParticipantSide.PERFORMER,
-                        reason="Не найдено в каталоге" if not employee_results else "Несколько вариантов",
-                        possible_matches=employee_results[:5],
+                        reason="Несколько вариантов в каталоге",
+                        possible_matches=options[:5],
+                    ))
+                elif name.strip():
+                    cp.unresolved.append(UnresolvedParticipant(
+                        source_name=name,
+                        side=ParticipantSide.PERFORMER,
+                        reason="Не найдено в каталоге",
+                        possible_matches=[],
                     ))
 
             for name in candidate.customer_names:
