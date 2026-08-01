@@ -6,7 +6,7 @@
   "latest_audit": "docs/opencode/audits/2026-08-01_08fb92d_initial-functional-audit.md",
   "latest_validation": "docs/opencode/validations/2026-08-01_97ddd03_initial-audit-fixes.md",
   "current_status": "ready_for_independent_validation",
-  "checked_commit": "97ddd03...",
+  "checked_commit": "4c303dd4800ec55526f0281bdb535124ed4f0b05",
   "rules": {
     "dry_run_required": true,
     "real_event_creation_during_validation": false,

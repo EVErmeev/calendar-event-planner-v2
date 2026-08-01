@@ -1,6 +1,6 @@
 # Повторная валидация
 
-**Проверенный commit:** `97ddd03`  
+**Проверенный commit:** `4c303dd`  
 **Дата:** 01.08.2026  
 **Основание:** `docs/opencode/audits/2026-08-01_08fb92d_initial-functional-audit.md`
 
