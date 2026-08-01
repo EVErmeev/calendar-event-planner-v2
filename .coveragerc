@@ -1,0 +1,13 @@
+[run]
+omit =
+    calendar_planner/ui/*
+    calendar_planner/cli/*
+    calendar_planner/app/bootstrap.py
+    tests/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError
+    pass
