@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "repository": "EVErmeev/calendar-event-planner-v2",
+  "default_branch": "master",
+  "active_task": "docs/opencode/specifications/2026-08-01_001_fix-initial-audit-findings.md",
+  "latest_audit": "docs/opencode/audits/2026-08-01_08fb92d_initial-functional-audit.md",
+  "latest_validation": null,
+  "current_status": "requires_fixes",
+  "checked_commit": "08fb92dfeb8b038cbce07f34eeaf82e6e98ca97c",
+  "rules": {
+    "dry_run_required": true,
+    "real_event_creation_during_validation": false,
+    "mock_is_not_runtime_evidence": true,
+    "ci_required": true,
+    "e2e_required": true
+  }
+}
