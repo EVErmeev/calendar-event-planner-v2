@@ -5,7 +5,7 @@ import os
 import shutil
 import sys
 import tempfile
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -122,8 +122,8 @@ def create_test_xlsx(filepath: str) -> None:
 
 
 def _make_calendar_event(event_id, subject, dt_str, tz_str):
-    from calendar_planner.domain.models import CalendarEvent
     from calendar_planner.calendar.datetime_normalizer import parse_iso_datetime
+    from calendar_planner.domain.models import CalendarEvent
 
     start = parse_iso_datetime(dt_str, tz_str)
     end_dt = start.aware_datetime + timedelta(hours=1)
@@ -160,11 +160,11 @@ class TestE2EPipeline:
 
     def test_full_pipeline_stages_1_8(self):
         from calendar_planner.domain.enums import (
-            MeetingDatePolicy,
-            MatchDecision,
-            ParticipantSide,
-            ParticipantRole,
             DescriptionItemType,
+            MatchDecision,
+            MeetingDatePolicy,
+            ParticipantRole,
+            ParticipantSide,
         )
         from calendar_planner.domain.models import SourceReference
 
@@ -173,9 +173,10 @@ class TestE2EPipeline:
         # ============================================================
         # STAGE 1: Container initialization and connection checks
         # ============================================================
-        from calendar_planner.app.settings import Settings
         from calendar_planner.app.container import AppContainer
+        from calendar_planner.app.settings import Settings
 
+        os.environ["APP_ENV"] = "test"
         os.environ["MCP_ENABLED"] = "false"
         os.environ["MCP_SERVER_URL"] = ""
         settings = Settings()
@@ -193,8 +194,8 @@ class TestE2EPipeline:
         # ============================================================
         # STAGE 2: Read source + extract meetings (AGREED_ONLY)
         # ============================================================
-        from calendar_planner.source.registry import registry
         from calendar_planner.extraction.structured import StructuredExtractor
+        from calendar_planner.source.registry import registry
 
         source_ref = SourceReference(type="file", path=self.xlsx_path)
         extracted_source = registry.read_source(source_ref)
@@ -325,10 +326,10 @@ class TestE2EPipeline:
         # ============================================================
         # STAGE 6: Build drafts, edit, validate, dry-run create
         # ============================================================
+        from calendar_planner.calendar.creator import EventCreator
+        from calendar_planner.domain.models import ResolvedParticipant
         from calendar_planner.drafts.builder import DraftBuilder
         from calendar_planner.drafts.editor import DraftEditor
-        from calendar_planner.calendar.creator import EventCreator
-        from calendar_planner.domain.models import ResolvedParticipant, DraftField
 
         builder = DraftBuilder()
         editor = DraftEditor()
@@ -428,9 +429,9 @@ class TestE2EPipeline:
         # ============================================================
         # STAGE 7: Save and restore session (full roundtrip)
         # ============================================================
-        from calendar_planner.session.storage import SessionStorage
-        from calendar_planner.session.models import StageState
         from calendar_planner.domain.enums import StageStatus
+        from calendar_planner.session.models import StageState
+        from calendar_planner.session.storage import SessionStorage
 
         storage = SessionStorage(base_dir=self.session_dir)
         session = storage.create_session(

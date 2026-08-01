@@ -130,9 +130,10 @@ class TableSchemaDetector:
                 if tz:
                     self._update_timezone_for_col(tz, col_idx, normalized)
 
-                if self.subject_col is None and any(p.search(normalized) for p in SUBJECT_PATTERNS):
-                    if not any(p.search(normalized) for p in AGREED_DATE_PATTERNS + AGREED_TIME_PATTERNS):
-                        self.subject_col = col_idx
+                if self.subject_col is None and any(p.search(normalized) for p in SUBJECT_PATTERNS) and not any(
+                    p.search(normalized) for p in AGREED_DATE_PATTERNS + AGREED_TIME_PATTERNS
+                ):
+                    self.subject_col = col_idx
 
                 if self.agreed_date_col is None and any(p.search(normalized) for p in AGREED_DATE_PATTERNS):
                     self.agreed_date_col = col_idx

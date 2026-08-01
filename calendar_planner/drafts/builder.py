@@ -1,15 +1,13 @@
 from __future__ import annotations
 
+from calendar_planner.domain.enums import DraftFieldOrigin
 from calendar_planner.domain.models import (
-    FinalEventDraft,
-    MeetingCandidate,
-    DraftField,
     CandidateParticipants,
     DescriptionItem,
-    ResolvedParticipant,
-    ParticipantRole,
+    DraftField,
+    FinalEventDraft,
+    MeetingCandidate,
 )
-from calendar_planner.domain.enums import DraftFieldOrigin
 
 
 class DraftBuilder:
@@ -110,9 +108,7 @@ class DraftBuilder:
             return False
         if not draft.timezone.value:
             return False
-        if not draft.duration_confirmed:
-            return False
-        return True
+        return draft.duration_confirmed
 
     def reset_counter(self) -> None:
         self._counter = 0

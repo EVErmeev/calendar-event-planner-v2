@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from calendar_planner.domain.models import CalendarEvent, NormalizedDateTime
 from calendar_planner.calendar.datetime_normalizer import parse_iso_datetime
+from calendar_planner.domain.models import CalendarEvent
 
 
 class FixtureCalendarGateway:

@@ -5,7 +5,6 @@ from difflib import SequenceMatcher
 
 from calendar_planner.domain.models import (
     ContactRecord,
-    MeetingCandidate,
     ExtractedSource,
     ParticipantSide,
 )
@@ -121,9 +120,10 @@ class ContactIndex:
         results = []
         name_lower = name.lower()
         for contact in self.contacts:
-            if name_lower in contact.full_name.lower() or name_lower in contact.surname.lower():
-                if organization is None or (contact.organization and organization in contact.organization):
-                    results.append(contact)
+            if (name_lower in contact.full_name.lower() or name_lower in contact.surname.lower()) and (
+                organization is None or (contact.organization and organization in contact.organization)
+            ):
+                results.append(contact)
         return results
 
     def find_by_email(self, email: str) -> list[ContactRecord]:

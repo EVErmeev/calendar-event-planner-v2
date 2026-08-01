@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 from calendar_planner.domain.models import (
-    MeetingCandidate,
     CandidateParticipants,
+    ExtractedSource,
+    MeetingCandidate,
+    ParticipantRole,
+    ParticipantSide,
     ResolvedParticipant,
     UnresolvedParticipant,
-    ParticipantSide,
-    ParticipantRole,
-    ExtractedSource,
+)
+from calendar_planner.participants.contact_index import (
+    ContactIndex,
+    fuzzy_match_surname,
 )
 from calendar_planner.participants.matcher import NameMatcher
-from calendar_planner.participants.contact_index import ContactIndex, fuzzy_match_surname
 
 
 class ParticipantResolver:

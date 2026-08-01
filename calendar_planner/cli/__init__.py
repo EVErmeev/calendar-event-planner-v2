@@ -5,8 +5,8 @@ import sys
 
 
 def cmd_check_connections(args: list[str]) -> None:
-    from calendar_planner.app.settings import settings
     from calendar_planner.app.container import AppContainer
+    from calendar_planner.app.settings import settings
 
     print("=== Проверка подключений ===")
     print(f"MCP Enabled: {settings.MCP_ENABLED}")
@@ -49,10 +49,10 @@ def cmd_analyze(args: list[str]) -> None:
         print("Usage: python -m calendar_planner.cli analyze --source=<path_or_url>")
         return
 
-    from calendar_planner.domain.models import SourceReference
-    from calendar_planner.source.registry import registry
-    from calendar_planner.extraction.structured import StructuredExtractor
     from calendar_planner.app.settings import settings
+    from calendar_planner.domain.models import SourceReference
+    from calendar_planner.extraction.structured import StructuredExtractor
+    from calendar_planner.source.registry import registry
 
     print(f"=== Анализ источника: {source_path} ===")
     source = SourceReference(type="file", path=source_path)
@@ -90,11 +90,11 @@ def cmd_compare(args: list[str]) -> None:
         print("Usage: python -m calendar_planner.cli compare --session=<id> [--fixture-calendar=<path>]")
         return
 
-    from calendar_planner.app.settings import settings
     from calendar_planner.app.container import AppContainer
-    from calendar_planner.session.storage import SessionStorage
+    from calendar_planner.app.settings import settings
     from calendar_planner.calendar.matcher import CalendarMatcher
     from calendar_planner.domain.models import MeetingCandidate
+    from calendar_planner.session.storage import SessionStorage
 
     storage = SessionStorage()
     session = storage.load_session(session_id)
@@ -111,6 +111,9 @@ def cmd_compare(args: list[str]) -> None:
     else:
         container = AppContainer(settings)
         container.init_mcp()
+        if container._calendar_gateway is None:
+            print("ОШИБКА: календарь MCP недоступен. Проверьте подключение или используйте --fixture-calendar=<path>")
+            return
         calendar = container.get_calendar_gateway()
         if not calendar.is_available():
             print("ОШИБКА: календарь MCP недоступен. Проверьте подключение или используйте --fixture-calendar=<path>")
@@ -160,12 +163,163 @@ def cmd_compare(args: list[str]) -> None:
 
 
 def cmd_resolve_participants(args: list[str]) -> None:
+    session_id = None
+    for arg in args:
+        if arg.startswith("--session="):
+            session_id = arg.split("=", 1)[1]
+
+    if not session_id:
+        print("Usage: python -m calendar_planner.cli resolve-participants --session=<id>")
+        return
+
+    from calendar_planner.app.container import AppContainer
+    from calendar_planner.app.settings import settings
+    from calendar_planner.domain.models import (
+        ExtractedSource,
+        MeetingCandidate,
+        SourceReference,
+    )
+    from calendar_planner.participants.resolver import ParticipantResolver
+    from calendar_planner.session.storage import SessionStorage
+
+    storage = SessionStorage()
+    session = storage.load_session(session_id)
+    if not session:
+        print(f"Сессия {session_id} не найдена")
+        return
+
     print("=== Разрешение участников ===")
-    print("Режим CLI: участники загружаются из сохранённой сессии")
+
+    candidates_data = json.loads(session.candidates_json) if session.candidates_json else []
+    candidates = [MeetingCandidate.from_dict(c) for c in candidates_data]
+
+    if not candidates:
+        print("Нет кандидатов для разрешения участников")
+        return
+
+    source_data = storage.load_artifact(session_id, "source_extracted.json")
+    if source_data:
+        source = ExtractedSource(
+            source=SourceReference(
+                type=session.source_ref.get("type", "memory"),
+                path=session.source_ref.get("path"),
+                url=session.source_ref.get("url"),
+            ),
+            sheets=source_data.get("sheets", {}),
+            metadata=source_data.get("metadata", {}),
+        )
+    else:
+        source = ExtractedSource(source=SourceReference(type="memory"))
+
+    container = AppContainer(settings)
+    container.init_mcp()
+    if container._directory_gateway is None:
+        print("ОШИБКА: сервис справочника MCP недоступен. Проверьте подключение MCP.")
+        return
+    directory_gw = container.get_directory_gateway()
+
+    if container._init_warnings:
+        for w in container._init_warnings:
+            print(f"  [WARN] {w}")
+
+    resolver = ParticipantResolver(
+        directory_gateway=directory_gw,
+        performer_domains=settings.PERFORMER_EMAIL_DOMAINS,
+        fuzzy_threshold=settings.CONTACT_FUZZY_THRESHOLD,
+    )
+
+    participant_results = resolver.resolve(candidates, source)
+
+    for cp in participant_results:
+        perf_count = len(cp.performer)
+        cust_count = len(cp.customer)
+        unres_count = len(cp.unresolved)
+        print(f"  {cp.candidate_id}: {perf_count} исп., {cust_count} зак., {unres_count} неопр.")
+
+    session.participants_json = json.dumps(
+        [cp.to_dict() for cp in participant_results],
+        ensure_ascii=False,
+        default=str,
+    )
+    storage.save_session(session)
+
+    storage.save_artifact(
+        session_id,
+        "participants_results.json",
+        [cp.to_dict() for cp in participant_results],
+    )
+    print(f"\nРезультаты сохранены в: {storage.get_session_dir(session_id) / 'participants_results.json'}")
 
 
 def cmd_enrich(args: list[str]) -> None:
+    session_id = None
+    for arg in args:
+        if arg.startswith("--session="):
+            session_id = arg.split("=", 1)[1]
+
+    if not session_id:
+        print("Usage: python -m calendar_planner.cli enrich --session=<id>")
+        return
+
+    from calendar_planner.domain.models import (
+        ExtractedSource,
+        MeetingCandidate,
+        SourceReference,
+    )
+    from calendar_planner.enrichment.extractor import EnrichmentExtractor
+    from calendar_planner.session.storage import SessionStorage
+
+    storage = SessionStorage()
+    session = storage.load_session(session_id)
+    if not session:
+        print(f"Сессия {session_id} не найдена")
+        return
+
     print("=== Обогащение описания ===")
+
+    candidates_data = json.loads(session.candidates_json) if session.candidates_json else []
+    candidates = [MeetingCandidate.from_dict(c) for c in candidates_data]
+
+    if not candidates:
+        print("Нет кандидатов для обогащения")
+        return
+
+    source_data = storage.load_artifact(session_id, "source_extracted.json")
+    if source_data:
+        source = ExtractedSource(
+            source=SourceReference(
+                type=session.source_ref.get("type", "memory"),
+                path=session.source_ref.get("path"),
+                url=session.source_ref.get("url"),
+            ),
+            sheets=source_data.get("sheets", {}),
+            metadata=source_data.get("metadata", {}),
+        )
+    else:
+        source = ExtractedSource(source=SourceReference(type="memory"))
+
+    extractor = EnrichmentExtractor()
+    enrichment_map = extractor.extract(candidates, source)
+
+    total_items = 0
+    for cid, items in enrichment_map.items():
+        total_items += len(items)
+        print(f"  {cid}: {len(items)} элементов описания")
+
+    session.enrichment_json = json.dumps(
+        {cid: [i.to_dict() for i in items] for cid, items in enrichment_map.items()},
+        ensure_ascii=False,
+        default=str,
+    )
+    storage.save_session(session)
+
+    storage.save_artifact(
+        session_id,
+        "enrichment_results.json",
+        {cid: [i.to_dict() for i in items] for cid, items in enrichment_map.items()},
+    )
+    print(f"\nВсего элементов: {total_items}")
+    print(f"Результаты сохранены в: {storage.get_session_dir(session_id) / 'enrichment_results.json'}")
 
 
 def cmd_preview(args: list[str]) -> None:
@@ -178,11 +332,11 @@ def cmd_preview(args: list[str]) -> None:
         print("Usage: python -m calendar_planner.cli preview --session=<id>")
         return
 
-    from calendar_planner.app.settings import settings
     from calendar_planner.app.container import AppContainer
-    from calendar_planner.session.storage import SessionStorage
+    from calendar_planner.app.settings import settings
     from calendar_planner.calendar.creator import EventCreator
     from calendar_planner.domain.models import FinalEventDraft
+    from calendar_planner.session.storage import SessionStorage
 
     storage = SessionStorage()
     session = storage.load_session(session_id)
@@ -194,6 +348,11 @@ def cmd_preview(args: list[str]) -> None:
 
     container = AppContainer(settings)
     container.init_mcp()
+
+    if container._calendar_gateway is None:
+        print("ОШИБКА: календарь MCP недоступен. Проверьте подключение MCP.")
+        return
+
     calendar = container.get_calendar_gateway()
 
     if not calendar.is_available():
@@ -251,11 +410,11 @@ def cmd_create(args: list[str]) -> None:
         print("Usage: python -m calendar_planner.cli create --session=<id> --draft-id=<id> [--confirm-create]")
         return
 
-    from calendar_planner.app.settings import settings
     from calendar_planner.app.container import AppContainer
-    from calendar_planner.session.storage import SessionStorage
+    from calendar_planner.app.settings import settings
     from calendar_planner.calendar.creator import EventCreator
     from calendar_planner.domain.models import FinalEventDraft
+    from calendar_planner.session.storage import SessionStorage
 
     storage = SessionStorage()
     session = storage.load_session(session_id)
@@ -294,6 +453,11 @@ def cmd_create(args: list[str]) -> None:
 
     container = AppContainer(settings)
     container.init_mcp()
+
+    if container._calendar_gateway is None:
+        print("ОШИБКА: календарь MCP недоступен. Проверьте подключение MCP.")
+        return
+
     calendar = container.get_calendar_gateway()
 
     if not confirm and not calendar.is_available():

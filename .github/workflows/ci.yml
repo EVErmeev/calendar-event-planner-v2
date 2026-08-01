@@ -47,4 +47,4 @@ jobs:
       - name: Install ruff
         run: pip install ruff
       - name: Lint
-        run: ruff check calendar_planner/ --ignore=F401,E501,F841
+        run: ruff check calendar_planner/ tests/

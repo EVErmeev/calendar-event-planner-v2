@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
-from calendar_planner.domain.validation import validate_draft_ready, validate_email, validate_payload
+from calendar_planner.domain.validation import (
+    validate_draft_ready,
+    validate_email,
+    validate_payload,
+)
 
 
 def validate_draft(draft: Any) -> list[str]:

@@ -5,7 +5,7 @@ import io
 from pathlib import Path
 from typing import Protocol
 
-from calendar_planner.domain.models import SourceReference, ExtractedSource
+from calendar_planner.domain.models import ExtractedSource, SourceReference
 
 
 class SourceAdapter(Protocol):
@@ -15,9 +15,7 @@ class SourceAdapter(Protocol):
 
 class TxtSourceAdapter:
     def can_handle(self, source: SourceReference) -> bool:
-        if source.path and Path(source.path).suffix.lower() in (".txt", ".md", ".markdown"):
-            return True
-        return False
+        return bool(source.path and Path(source.path).suffix.lower() in (".txt", ".md", ".markdown"))
 
     def read(self, source: SourceReference) -> ExtractedSource:
         path = Path(source.path)
@@ -33,9 +31,7 @@ class TxtSourceAdapter:
 
 class MarkdownSourceAdapter:
     def can_handle(self, source: SourceReference) -> bool:
-        if source.path and Path(source.path).suffix.lower() in (".md", ".markdown"):
-            return True
-        return False
+        return bool(source.path and Path(source.path).suffix.lower() in (".md", ".markdown"))
 
     def read(self, source: SourceReference) -> ExtractedSource:
         path = Path(source.path)
@@ -51,9 +47,7 @@ class MarkdownSourceAdapter:
 
 class CsvSourceAdapter:
     def can_handle(self, source: SourceReference) -> bool:
-        if source.path and Path(source.path).suffix.lower() == ".csv":
-            return True
-        return False
+        return bool(source.path and Path(source.path).suffix.lower() == ".csv")
 
     def read(self, source: SourceReference) -> ExtractedSource:
         path = Path(source.path)
@@ -70,9 +64,7 @@ class CsvSourceAdapter:
 
 class XlsxSourceAdapter:
     def can_handle(self, source: SourceReference) -> bool:
-        if source.path and Path(source.path).suffix.lower() in (".xlsx", ".xlsm"):
-            return True
-        return False
+        return bool(source.path and Path(source.path).suffix.lower() in (".xlsx", ".xlsm"))
 
     def read(self, source: SourceReference) -> ExtractedSource:
         import openpyxl
@@ -134,9 +126,7 @@ class XlsxSourceAdapter:
 
 class DocxSourceAdapter:
     def can_handle(self, source: SourceReference) -> bool:
-        if source.path and Path(source.path).suffix.lower() == ".docx":
-            return True
-        return False
+        return bool(source.path and Path(source.path).suffix.lower() == ".docx")
 
     def read(self, source: SourceReference) -> ExtractedSource:
         import docx
@@ -165,9 +155,7 @@ class DocxSourceAdapter:
 
 class PdfSourceAdapter:
     def can_handle(self, source: SourceReference) -> bool:
-        if source.path and Path(source.path).suffix.lower() == ".pdf":
-            return True
-        return False
+        return bool(source.path and Path(source.path).suffix.lower() == ".pdf")
 
     def read(self, source: SourceReference) -> ExtractedSource:
         from PyPDF2 import PdfReader
@@ -197,9 +185,7 @@ class HtmlSourceAdapter:
     def can_handle(self, source: SourceReference) -> bool:
         if source.path and Path(source.path).suffix.lower() in (".html", ".htm"):
             return True
-        if source.url and source.format == "html":
-            return True
-        return False
+        return bool(source.url and source.format == "html")
 
     def read(self, source: SourceReference) -> ExtractedSource:
         from bs4 import BeautifulSoup
@@ -243,9 +229,7 @@ class GoogleSheetsSourceAdapter:
     def can_handle(self, source: SourceReference) -> bool:
         if source.url and "docs.google.com/spreadsheets" in source.url:
             return True
-        if source.type == "google_sheets":
-            return True
-        return False
+        return source.type == "google_sheets"
 
     def read(self, source: SourceReference) -> ExtractedSource:
         import requests
@@ -299,12 +283,11 @@ class GoogleDocsSourceAdapter:
     def can_handle(self, source: SourceReference) -> bool:
         if source.url and "docs.google.com/document" in source.url:
             return True
-        if source.type == "google_docs":
-            return True
-        return False
+        return source.type == "google_docs"
 
     def read(self, source: SourceReference) -> ExtractedSource:
         import re
+
         import requests
 
         match = re.search(r"/document/d/([a-zA-Z0-9-_]+)", source.url or "")
@@ -326,9 +309,7 @@ class GoogleDocsSourceAdapter:
 
 class ConfluenceSourceAdapter:
     def can_handle(self, source: SourceReference) -> bool:
-        if source.url and ("confluence" in source.url.lower() or source.type == "confluence"):
-            return True
-        return False
+        return bool(source.url and ("confluence" in source.url.lower() or source.type == "confluence"))
 
     def read(self, source: SourceReference) -> ExtractedSource:
         import requests
@@ -366,9 +347,7 @@ class SharePointSourceAdapter:
     def can_handle(self, source: SourceReference) -> bool:
         if source.url and "sharepoint.com" in source.url.lower():
             return True
-        if source.type == "sharepoint":
-            return True
-        return False
+        return source.type == "sharepoint"
 
     def read(self, source: SourceReference) -> ExtractedSource:
         import requests

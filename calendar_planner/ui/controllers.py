@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 
+from calendar_planner.domain.enums import StageStatus
 from calendar_planner.domain.models import (
-    ExtractedSource,
-    MeetingCandidate,
-    FinalEventDraft,
     CandidateParticipants,
     DescriptionItem,
-    ResolvedParticipant,
+    ExtractedSource,
+    FinalEventDraft,
+    MeetingCandidate,
 )
-from calendar_planner.domain.enums import StageStatus
 from calendar_planner.session.models import RunSession, StageState
 from calendar_planner.session.storage import SessionStorage
 
@@ -147,6 +145,71 @@ class StageController:
                 self._skipped_rows,
             )
 
+        if self._calendar_events:
+            storage.save_artifact(
+                session.session_id,
+                "calendar_events.json",
+                [e.to_dict() if hasattr(e, 'to_dict') else e for e in self._calendar_events],
+            )
+            session.calendar_events_json = json.dumps(
+                [e.to_dict() if hasattr(e, 'to_dict') else e for e in self._calendar_events],
+                ensure_ascii=False,
+                default=str,
+            )
+
+        if self._matches:
+            serializable_matches: dict[str, dict | None] = {}
+            for cid, match in self._matches.items():
+                if match is not None and hasattr(match, 'to_dict'):
+                    serializable_matches[cid] = match.to_dict()
+                else:
+                    serializable_matches[cid] = None
+            storage.save_artifact(
+                session.session_id,
+                "calendar_matches.json",
+                serializable_matches,
+            )
+            session.calendar_matches_json = json.dumps(
+                serializable_matches, ensure_ascii=False, default=str
+            )
+
+        if self._participants:
+            storage.save_artifact(
+                session.session_id,
+                "participants_results.json",
+                [cp.to_dict() for cp in self._participants],
+            )
+            session.participants_json = json.dumps(
+                [cp.to_dict() for cp in self._participants],
+                ensure_ascii=False,
+                default=str,
+            )
+
+        if self._enrichment:
+            enrichment_serializable = {}
+            for cid, items in self._enrichment.items():
+                enrichment_serializable[cid] = [i.to_dict() for i in items]
+            storage.save_artifact(
+                session.session_id,
+                "enrichment_results.json",
+                enrichment_serializable,
+            )
+            session.enrichment_json = json.dumps(
+                enrichment_serializable, ensure_ascii=False, default=str,
+            )
+
+        if self._drafts:
+            storage.save_artifact(
+                session.session_id,
+                "drafts.json",
+                [d.to_dict() for d in self._drafts],
+            )
+            session.drafts_json = json.dumps(
+                [d.to_dict() for d in self._drafts],
+                ensure_ascii=False,
+                default=str,
+            )
+
         session.stages = [StageState.from_dict(s.to_dict()) for s in self.stages]
         storage.save_session(session)
         self._session = session
@@ -154,8 +217,59 @@ class StageController:
 
     def load_session(self, storage: SessionStorage, session_id: str) -> RunSession | None:
         session = storage.load_session(session_id)
-        if session:
-            self._session = session
+        if not session:
+            return None
+
+        self._session = session
+
+        if session.stages:
+            self.stages = [StageState.from_dict(s.to_dict()) for s in session.stages]
+            for s in self.stages:
+                sidx = {
+                    "connections": 0, "extraction": 1, "comparison": 2,
+                    "participants": 3, "enrichment": 4, "creation": 5,
+                }.get(s.name)
+                if sidx is not None and s.status == StageStatus.SUCCESS:
+                    self.current_stage = max(self.current_stage, sidx)
+
+        if session.candidates_json:
+            from calendar_planner.domain.models import MeetingCandidate
+            candidates_data = json.loads(session.candidates_json)
+            self._all_candidates = [MeetingCandidate.from_dict(c) for c in candidates_data]
+
+        if session.calendar_events_json:
+            from calendar_planner.domain.models import CalendarEvent
+            events_data = json.loads(session.calendar_events_json)
+            self._calendar_events = [CalendarEvent(
+                event_id=e.get("event_id", ""),
+                ical_uid=e.get("ical_uid"),
+                subject=e.get("subject", ""),
+            ) for e in events_data]
+
+        if session.calendar_matches_json:
+            self._matches = json.loads(session.calendar_matches_json)
+
+        if session.participants_json:
+            from calendar_planner.domain.models import CandidateParticipants
+            participants_data = json.loads(session.participants_json)
+            self._participants = [CandidateParticipants.from_dict(cp) for cp in participants_data]
+
+        if session.enrichment_json:
+            from calendar_planner.domain.models import DescriptionItem
+            enrichment_data = json.loads(session.enrichment_json)
+            self._enrichment = {
+                cid: [DescriptionItem.from_dict(i) for i in items]
+                for cid, items in enrichment_data.items()
+            }
+
+        if session.drafts_json:
+            from calendar_planner.domain.models import FinalEventDraft
+            drafts_data = json.loads(session.drafts_json)
+            self._drafts = [FinalEventDraft.from_dict(d) for d in drafts_data]
+            self._original_drafts = [
+                FinalEventDraft.from_dict(d.to_dict()) for d in self._drafts
+            ]
+
         return session
 
     def has_unsaved_changes(self) -> bool:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import sys
 import os
+import sys
 import tkinter as tk
 from pathlib import Path
 
@@ -27,8 +27,8 @@ def main() -> None:
     project_root = Path(__file__).parent.parent.parent
     sys.path.insert(0, str(project_root))
 
-    from calendar_planner.app.settings import settings
     from calendar_planner.app.container import AppContainer
+    from calendar_planner.app.settings import settings
 
     container = AppContainer(settings)
 
@@ -43,7 +43,7 @@ def main() -> None:
     from calendar_planner.ui.main_window import MainWindow
 
     root = tk.Tk()
-    app = MainWindow(root, container=container)
+    _app = MainWindow(root, container=container)
     root.mainloop()
 
 

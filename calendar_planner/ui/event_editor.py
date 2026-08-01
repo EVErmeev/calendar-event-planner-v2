@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk, messagebox
-from datetime import datetime, timedelta
+from tkinter import messagebox, ttk
 
-from calendar_planner.domain.models import FinalEventDraft, ResolvedParticipant, ParticipantRole
 from calendar_planner.domain.enums import ParticipantSide
+from calendar_planner.domain.models import (
+    FinalEventDraft,
+    ParticipantRole,
+    ResolvedParticipant,
+)
 from calendar_planner.drafts.editor import DraftEditor
 from calendar_planner.drafts.hash import compute_draft_hash
 
@@ -434,8 +437,6 @@ class EventEditorFrame(ttk.Frame):
         self.clipboard_append(text)
 
     def _recheck_duplicate(self) -> None:
-        self.draft.match_input_hash = compute_draft_hash(self.draft)
-
         if self.on_recheck:
             try:
                 self.on_recheck(self.draft)
@@ -448,6 +449,7 @@ class EventEditorFrame(ttk.Frame):
                 self._update_ready_status()
                 return
             self.draft.match_status = "checked"
+            self.draft.match_input_hash = compute_draft_hash(self.draft)
         else:
             self.draft.match_status = "stale"
             self.status_label.config(

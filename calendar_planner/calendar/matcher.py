@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from difflib import SequenceMatcher
 
+from calendar_planner.domain.enums import MatchDecision
 from calendar_planner.domain.models import (
-    MeetingCandidate,
     CalendarEvent,
     CalendarMatch,
+    MeetingCandidate,
     NormalizedDateTime,
 )
-from calendar_planner.domain.enums import MatchDecision
 from calendar_planner.extraction.datetime_normalizer import parse_date_time
 
 

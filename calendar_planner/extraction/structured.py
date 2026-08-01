@@ -1,14 +1,21 @@
 from __future__ import annotations
 
-from calendar_planner.domain.models import MeetingCandidate, StructuredMeetingRow, ExtractedSource
 from calendar_planner.domain.enums import MeetingDatePolicy
+from calendar_planner.domain.models import (
+    ExtractedSource,
+    MeetingCandidate,
+    StructuredMeetingRow,
+)
+from calendar_planner.extraction.datetime_normalizer import (
+    normalize_date_value,
+    normalize_time_value,
+)
 from calendar_planner.source.schema_detector import (
     TableSchemaDetector,
+    detect_timezone_from_text,
     parse_names,
     split_subject_and_description,
-    detect_timezone_from_text,
 )
-from calendar_planner.extraction.datetime_normalizer import normalize_date_value, normalize_time_value
 
 
 class StructuredExtractor:

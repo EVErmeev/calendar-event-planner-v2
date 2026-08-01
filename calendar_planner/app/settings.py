@@ -15,6 +15,9 @@ class Settings:
         self.MEETING_DATE_POLICY: MeetingDatePolicy = MeetingDatePolicy(
             os.getenv("MEETING_DATE_POLICY", "AGREED_ONLY")
         )
+        self.CALENDAR_DATE_RANGE_BUFFER_DAYS: int = int(
+            os.getenv("CALENDAR_DATE_RANGE_BUFFER_DAYS", "7")
+        )
         self.CALENDAR_MATCH_TOLERANCE_MINUTES: int = int(
             os.getenv("CALENDAR_MATCH_TOLERANCE_MINUTES", "30")
         )

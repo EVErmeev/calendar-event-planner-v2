@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from calendar_planner.domain.models import (
-    ResolvedParticipant,
-    ParticipantSide,
     ParticipantRole,
+    ParticipantSide,
+    ResolvedParticipant,
 )
 
 

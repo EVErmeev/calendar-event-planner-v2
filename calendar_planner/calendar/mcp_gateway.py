@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
-from calendar_planner.domain.models import CalendarEvent
 from calendar_planner.calendar.datetime_normalizer import parse_iso_datetime
+from calendar_planner.domain.models import CalendarEvent
 
 _logger = logging.getLogger(__name__)
 
@@ -23,7 +21,7 @@ class MCPCalendarGateway:
     def is_available(self) -> bool:
         if self._mcp_call is not None:
             try:
-                result = self._mcp_call(self._find_tool, {"start": "2000-01-01", "end": "2000-01-02"})
+                self._mcp_call(self._find_tool, {"start": "2000-01-01", "end": "2000-01-02"})
                 self._available = True
             except Exception:
                 self._available = False
@@ -54,6 +52,7 @@ class MCPCalendarGateway:
 
     def find_events(self, start_date: str, end_date: str) -> list[CalendarEvent]:
         if not self._mcp_call:
+            _logger.warning("find_events: MCP call function not available — returning empty list")
             return []
 
         raw_result = self._mcp_call(self._find_tool, {
@@ -61,11 +60,18 @@ class MCPCalendarGateway:
             "end": end_date,
         })
 
+        # Normalize BEFORE parsing — call exactly once, use result throughout
         raw_events = self._normalize_response(raw_result)
         self._last_response_raw = raw_events
 
+        if not raw_events:
+            _logger.warning(
+                "find_events: _normalize_response returned empty list for range %s–%s",
+                start_date, end_date,
+            )
+
         events = []
-        for raw in self._last_response_raw:
+        for raw in raw_events:
             event = self._parse_calendar_event(raw)
             if event:
                 events.append(event)
@@ -74,25 +80,61 @@ class MCPCalendarGateway:
 
     def _normalize_response(self, raw_result) -> list[dict]:
         if isinstance(raw_result, list):
-            return [r for r in raw_result if isinstance(r, dict)]
+            filtered = [r for r in raw_result if isinstance(r, dict)]
+            if len(filtered) < len(raw_result):
+                _logger.warning(
+                    "_normalize_response: dropped %d non-dict items from list",
+                    len(raw_result) - len(filtered),
+                )
+            return filtered
 
         if isinstance(raw_result, dict):
             if "events" in raw_result:
                 events = raw_result["events"]
                 if isinstance(events, list):
-                    return [r for r in events if isinstance(r, dict)]
-                _logger.warning("MCP response 'events' key is not a list: %s", type(events))
+                    filtered = [r for r in events if isinstance(r, dict)]
+                    if len(filtered) < len(events):
+                        _logger.warning(
+                            "_normalize_response: dropped %d non-dict items from 'events'",
+                            len(events) - len(filtered),
+                        )
+                    return filtered
+                _logger.warning(
+                    "_normalize_response: 'events' key is not a list (type=%s); "
+                    "response keys=%s",
+                    type(events).__name__, list(raw_result.keys()),
+                )
             if "result" in raw_result:
                 result = raw_result["result"]
                 if isinstance(result, list):
-                    return [r for r in result if isinstance(r, dict)]
+                    filtered = [r for r in result if isinstance(r, dict)]
+                    if len(filtered) < len(result):
+                        _logger.warning(
+                            "_normalize_response: dropped %d non-dict items from 'result'",
+                            len(result) - len(filtered),
+                        )
+                    return filtered
                 if isinstance(result, dict):
                     for key in ("events", "items", "data"):
                         if key in result and isinstance(result[key], list):
-                            return [r for r in result[key] if isinstance(r, dict)]
-                _logger.warning("MCP response 'result' key has unexpected structure: %s", type(result))
+                            filtered = [r for r in result[key] if isinstance(r, dict)]
+                            return filtered
+                _logger.warning(
+                    "_normalize_response: 'result' key has unexpected structure (type=%s); "
+                    "response keys=%s",
+                    type(result).__name__,
+                    list(result.keys()) if isinstance(result, dict) else "N/A",
+                )
             if any(k in raw_result for k in ("nextPageToken", "hasMore", "pagination")):
-                _logger.warning("MCP response contains pagination placeholders — possible incomplete result")
+                _logger.warning(
+                    "_normalize_response: response contains pagination placeholders "
+                    "— possible incomplete result"
+                )
+            _logger.warning(
+                "_normalize_response: dict response has no recognized structure; "
+                "keys=%s",
+                list(raw_result.keys()),
+            )
             return []
 
         if isinstance(raw_result, str):
@@ -100,10 +142,16 @@ class MCPCalendarGateway:
                 parsed = json.loads(raw_result)
                 return self._normalize_response(parsed)
             except json.JSONDecodeError:
-                _logger.warning("MCP response is a non-JSON string: %s", raw_result[:200])
+                _logger.warning(
+                    "_normalize_response: response is a non-JSON string: %s",
+                    raw_result[:200],
+                )
                 return []
 
-        _logger.warning("Unexpected MCP response type: %s", type(raw_result))
+        _logger.warning(
+            "_normalize_response: unexpected response type %s; value=%r",
+            type(raw_result).__name__, raw_result,
+        )
         return []
 
     def create_event(self, payload: dict, dry_run: bool = True) -> dict:
@@ -159,14 +207,14 @@ class MCPCalendarGateway:
                 try:
                     start = parse_iso_datetime(start_str, start_tz)
                 except Exception:
-                    pass
+                    _logger.debug("Failed to parse start datetime: %s", start_str)
 
             end = None
             if end_str:
                 try:
                     end = parse_iso_datetime(end_str, end_tz)
                 except Exception:
-                    pass
+                    _logger.debug("Failed to parse end datetime: %s", end_str)
 
             attendees_list = raw.get("attendees", [])
             if isinstance(attendees_list, str):
@@ -188,4 +236,5 @@ class MCPCalendarGateway:
                 raw_data=raw,
             )
         except Exception:
+            _logger.warning("_parse_calendar_event: failed to parse event dict", exc_info=True)
             return None

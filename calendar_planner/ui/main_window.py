@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-import json
+from tkinter import filedialog, messagebox, ttk
 
-from calendar_planner.ui.controllers import StageController
-from calendar_planner.session.storage import SessionStorage
-from calendar_planner.session.models import RunSession
 from calendar_planner.domain.enums import StageStatus
+from calendar_planner.session.storage import SessionStorage
+from calendar_planner.ui.controllers import StageController
 
 
 class MainWindow:
@@ -142,15 +140,24 @@ class MainWindow:
             messagebox.showwarning("Внимание", "Укажите файл или ссылку")
             return
 
+        stage_1_status = self.controller.get_stage_status(0)
+        if stage_1_status not in ("success", "success_with_warnings"):
+            messagebox.showerror(
+                "Ошибка этапа 1",
+                "Подключения не проверены или проверка завершилась с ошибкой.\n"
+                "Запустите проверку подключений перед анализом.",
+            )
+            return
+
         self.info_text.delete(1.0, tk.END)
         self.info_text.insert(tk.END, f"Анализ источника: {source}\n")
         self.info_text.insert(tk.END, "=" * 60 + "\n")
 
         try:
-            from calendar_planner.domain.models import SourceReference
-            from calendar_planner.source.registry import registry
-            from calendar_planner.extraction.structured import StructuredExtractor
             from calendar_planner.app.settings import settings
+            from calendar_planner.domain.models import SourceReference
+            from calendar_planner.extraction.structured import StructuredExtractor
+            from calendar_planner.source.registry import registry
 
             if source.startswith("http"):
                 src_ref = SourceReference(type="url", url=source)
@@ -181,7 +188,6 @@ class MainWindow:
             for sr in extractor.skipped_rows:
                 self.info_text.insert(tk.END, f"  {sr['sheet']} R{sr['row']}: {sr['reason']}\n")
 
-            self.controller.set_stage_success("stage_1")
             self.controller.set_stage_success("stage_2")
 
             self._run_stages_3_to_6(extracted, all_candidates)
@@ -200,24 +206,45 @@ class MainWindow:
         self.info_text.insert(tk.END, "[Этап 3] Сравнение с календарём...\n")
         try:
             calendar_gw = self.container.get_calendar_gateway() if self.container else None
+            from datetime import date, timedelta
+
+            from calendar_planner.app.settings import settings
             from calendar_planner.calendar.matcher import CalendarMatcher
 
             calendar_events: list = []
             if calendar_gw:
-                from datetime import date, timedelta
-                today = date.today().isoformat()
-                week_later = (date.today() + timedelta(days=90)).isoformat()
+                candidate_dates = [
+                    d for c in all_candidates
+                    if c.start_date and (d := self._parse_candidate_date(c.start_date)) is not None
+                ]
+                if candidate_dates:
+                    min_date = min(candidate_dates)
+                    max_date = max(candidate_dates)
+                    buffer = timedelta(days=settings.CALENDAR_DATE_RANGE_BUFFER_DAYS)
+                    range_start = (min_date - buffer).isoformat()
+                    range_end = (max_date + buffer).isoformat()
+                else:
+                    today = date.today().isoformat()
+                    range_start = today
+                    range_end = (date.today() + timedelta(days=90)).isoformat()
+
                 try:
-                    calendar_events = calendar_gw.find_events(today, week_later)
+                    calendar_events = calendar_gw.find_events(range_start, range_end)
                 except Exception as exc:
-                    self.info_text.insert(tk.END, f"  Предупреждение: не удалось получить события календаря: {exc}\n")
+                    self.info_text.insert(tk.END, f"  Ошибка получения событий календаря: {exc}\n")
+                    self.controller.set_stage_error("stage_3", str(exc))
+                    self._update_stage_indicators()
+                    return
 
             matcher = CalendarMatcher(tolerance_minutes=30, subject_threshold=0.75)
             matches = matcher.match_all(all_candidates, calendar_events)
             self.controller.set_matches(matches)
             self.controller.set_calendar_events(calendar_events)
 
-            matched_count = sum(1 for m in matches.values() if m is not None)
+            matched_count = sum(
+                1 for m in matches.values()
+                if m is not None and m.decision.name != "NEW"
+            )
             self.info_text.insert(tk.END, f"  Сравнено: {len(all_candidates)}, найдено совпадений: {matched_count}\n")
             self.controller.set_stage_success("stage_3")
         except Exception as exc:
@@ -384,7 +411,9 @@ class MainWindow:
         self._stage_frames[2] = frame
 
     def _show_stage_4_content(self) -> None:
-        from calendar_planner.ui.stages.stage4_participants import Stage4ParticipantsFrame
+        from calendar_planner.ui.stages.stage4_participants import (
+            Stage4ParticipantsFrame,
+        )
 
         participants = self.controller._participants
 
@@ -412,6 +441,13 @@ class MainWindow:
         frame.pack(fill=tk.BOTH, expand=True)
         self._stage_frames[5] = frame
 
+    def _parse_candidate_date(self, date_str: str):
+        from datetime import date as date_type
+        try:
+            return date_type.fromisoformat(date_str)
+        except (ValueError, TypeError):
+            return None
+
     def _make_recheck_callback(self):
         def recheck_draft(draft):
             if self.container is None:
@@ -419,13 +455,23 @@ class MainWindow:
                 return
 
             calendar_gw = self.container.get_calendar_gateway()
-            from calendar_planner.calendar.matcher import CalendarMatcher
             from datetime import date, timedelta
 
-            today = date.today().isoformat()
-            week_later = (date.today() + timedelta(days=90)).isoformat()
+            from calendar_planner.app.settings import settings
+            from calendar_planner.calendar.matcher import CalendarMatcher
+
+            draft_date = self._parse_candidate_date(draft.start_date.value or "")
+            if draft_date is not None:
+                buffer = timedelta(days=settings.CALENDAR_DATE_RANGE_BUFFER_DAYS)
+                range_start = (draft_date - buffer).isoformat()
+                range_end = (draft_date + buffer).isoformat()
+            else:
+                today = date.today().isoformat()
+                range_start = today
+                range_end = (date.today() + timedelta(days=90)).isoformat()
+
             try:
-                calendar_events = calendar_gw.find_events(today, week_later)
+                calendar_events = calendar_gw.find_events(range_start, range_end)
             except Exception as exc:
                 messagebox.showerror("Ошибка", f"Не удалось получить события календаря: {exc}")
                 raise
@@ -439,10 +485,12 @@ class MainWindow:
                 calendar_events=calendar_events,
             )
 
-            if match is None:
-                draft.match_status = "checked"
-            else:
-                draft.match_status = "checked"
+            draft.calendar_matches = []
+            if match is not None:
+                match.candidate_id = draft.candidate_id
+                draft.calendar_matches.append(match)
+            draft.match_status = "checked"
+            draft.match_input_hash = draft.compute_input_hash()
 
         return recheck_draft
 

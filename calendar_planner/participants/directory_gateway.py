@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from calendar_planner.domain.models import ResolvedParticipant, ParticipantSide
-
 
 class DirectoryGateway(Protocol):
     def search(self, name: str) -> list[dict]: ...

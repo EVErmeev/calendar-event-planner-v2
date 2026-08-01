@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from .enums import (
-    DraftFieldOrigin,
+    DescriptionItemType,
     MatchDecision,
     ParticipantRole,
     ParticipantSide,
-    StageStatus,
-    DescriptionItemType,
 )
 
 

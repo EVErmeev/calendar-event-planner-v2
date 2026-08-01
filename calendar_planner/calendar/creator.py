@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from calendar_planner.domain.enums import MatchDecision
 from calendar_planner.domain.models import FinalEventDraft
-from calendar_planner.domain.validation import validate_payload, validate_email
+from calendar_planner.domain.validation import validate_email, validate_payload
 
 
 class EventCreator:
@@ -126,10 +127,18 @@ class EventCreator:
             errors.append("Match status is stale — recheck required")
         if draft.match_status in ("not_checked", ""):
             errors.append("Match has not been checked")
+        if draft.match_status == "checked":
+            current_hash = draft.compute_input_hash()
+            if current_hash != draft.match_input_hash:
+                errors.append("Match hash is stale — recheck required")
 
         for m in draft.calendar_matches:
-            if m.decision and m.decision.value == "DUPLICATE":
+            if m.decision and (
+                m.decision == MatchDecision.DUPLICATE
+                or m.decision.value == "DUPLICATE"
+            ):
                 errors.append(f"Duplicate found in calendar: {m.calendar_event.event_id}")
+                draft.is_ready = False
 
         for att in draft.required_attendees + draft.optional_attendees:
             if att.email:

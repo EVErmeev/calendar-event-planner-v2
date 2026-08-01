@@ -3,8 +3,8 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-from calendar_planner.domain.models import CalendarMatch
 from calendar_planner.domain.enums import MatchDecision
+from calendar_planner.domain.models import CalendarMatch
 
 
 class Stage3ComparisonFrame(ttk.Frame):
@@ -57,7 +57,11 @@ class Stage3ComparisonFrame(ttk.Frame):
                 continue
 
             cal_subject = match.calendar_event.subject[:60] if match.calendar_event else "—"
-            time_diff = f"{match.time_diff_minutes} мин" if match.time_diff_minutes is not None else "—"
+            if match.decision == MatchDecision.NEW:
+                time_diff = "—"
+                cal_subject = "—"
+            else:
+                time_diff = f"{match.time_diff_minutes} мин" if match.time_diff_minutes is not None else "—"
             subj_sim = f"{match.subject_similarity:.0%}"
             decision = decision_labels.get(match.decision, match.decision.value)
 

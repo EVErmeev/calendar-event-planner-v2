@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-
 from calendar_planner.domain.models import FinalEventDraft
 
 

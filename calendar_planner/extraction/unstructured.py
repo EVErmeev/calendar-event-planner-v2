@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
 
-from calendar_planner.domain.models import MeetingCandidate, ExtractedSource
-from calendar_planner.extraction.datetime_normalizer import normalize_date_value, normalize_time_value
+from calendar_planner.domain.models import ExtractedSource, MeetingCandidate
+from calendar_planner.extraction.datetime_normalizer import (
+    normalize_date_value,
+    normalize_time_value,
+)
 
 MEETING_KEYWORDS = [
     "встреча", "созвон", "демонстрация", "совещание", "рабочая сессия",

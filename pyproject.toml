@@ -51,3 +51,12 @@ exclude_lines = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+
+[tool.ruff.lint]
+ignore = [
+    "BLE001",  # blind except — намеренно для graceful degradation
+    "DTZ011",  # date.today — допустимо для date-only операций
+    "DTZ007",  # strptime без timezone — допустимо для ISO-парсинга
+    "FURB162", # fromisoformat-replace-z — стилистическая рекомендация
+    "FLY002",  # static-join-to-f-string — стилистическая рекомендация
+]

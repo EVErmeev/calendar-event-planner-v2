@@ -8,12 +8,15 @@ from calendar_planner.ui.event_editor import EventEditorFrame
 
 
 class Stage6CreationFrame(ttk.Frame):
-    def __init__(self, parent, drafts: list[FinalEventDraft], on_recheck=None, **kwargs):
+    def __init__(self, parent, drafts: list[FinalEventDraft], on_recheck=None, on_create=None, **kwargs):
         super().__init__(parent, **kwargs)
         self.drafts = drafts
         self.on_recheck = on_recheck
+        self.on_create = on_create
         self._editor_frame: EventEditorFrame | None = None
         self._draft_vars: dict[str, tk.BooleanVar] = {}
+        self._current_draft: FinalEventDraft | None = None
+        self._results_table: ttk.Frame | None = None
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -51,6 +54,8 @@ class Stage6CreationFrame(ttk.Frame):
         )
         no_draft_label.pack(expand=True)
 
+        self._build_action_bar()
+
     def _build_draft_list(self, parent: ttk.Frame) -> None:
         for draft in self.drafts:
             var = tk.BooleanVar(value=draft.selected)
@@ -66,6 +71,7 @@ class Stage6CreationFrame(ttk.Frame):
         row = ttk.Frame(parent)
         row.pack(fill=tk.X, pady=2, padx=5)
 
+        var.trace_add("write", lambda *a, d=draft, v=var: setattr(d, "selected", v.get()))
         cb = ttk.Checkbutton(row, variable=var)
         cb.pack(side=tk.LEFT)
 
@@ -85,6 +91,7 @@ class Stage6CreationFrame(ttk.Frame):
         ttk.Label(info_frame, text=status_text, foreground=status_color, font=("", 7)).pack(anchor=tk.W)
 
     def _on_draft_click(self, draft: FinalEventDraft) -> None:
+        self._current_draft = draft
         for widget in self._right_frame.winfo_children():
             widget.destroy()
 
@@ -121,4 +128,84 @@ class Stage6CreationFrame(ttk.Frame):
             widget.destroy()
         self._editor_frame = None
         self._draft_vars = {}
+        self._current_draft = None
+        self._results_table = None
         self._build_ui()
+
+    def _build_action_bar(self) -> None:
+        bar = ttk.Frame(self)
+        bar.pack(fill=tk.X, pady=(10, 0), padx=5)
+        ttk.Button(bar, text="Создать выбранное", command=self._create_selected).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bar, text="Создать отмеченные", command=self._create_checked).pack(side=tk.LEFT, padx=2)
+
+    def _create_selected(self) -> None:
+        draft = self._current_draft
+        if draft is None:
+            from tkinter import messagebox
+            messagebox.showinfo("Информация", "Сначала выберите черновик для создания.")
+            return
+        if self.on_create is None:
+            from tkinter import messagebox
+            messagebox.showinfo("DRY RUN", f"DRY RUN — событие не создано\nDraft: {draft.draft_id}")
+            return
+        self.on_create(draft)
+
+    def _create_checked(self) -> None:
+        selected = self.get_selected_drafts()
+        if not selected:
+            from tkinter import messagebox
+            messagebox.showinfo("Информация", "Нет отмеченных черновиков.")
+            return
+        from tkinter import messagebox
+        count = len(selected)
+        if not messagebox.askyesno(
+            "Подтверждение",
+            f"Создать {count} событий из отмеченных черновиков?",
+        ):
+            return
+        if self.on_create is None:
+            for draft in selected:
+                self._show_dry_run_result(draft.draft_id, draft.subject.value or "Без темы")
+        else:
+            for draft in selected:
+                self.on_create(draft)
+
+    def _show_dry_run_result(self, draft_id: str, subject: str) -> None:
+        self._ensure_results_table()
+        row = ttk.Frame(self._results_table)
+        row.pack(fill=tk.X, pady=1)
+        ttk.Label(row, text=draft_id, width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(row, text=subject[:40], width=30, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(row, text="DRY RUN — событие не создано", foreground="gray", width=30, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(row, text="—", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(row, text="—", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(row, text="—", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+
+    def show_creation_result(self, draft_id: str, subject: str, status: str, event_id: str = "", url: str = "", errors: str = "") -> None:
+        self._ensure_results_table()
+        row = ttk.Frame(self._results_table)
+        row.pack(fill=tk.X, pady=1)
+        ttk.Label(row, text=draft_id, width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(row, text=subject[:40], width=30, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        status_color = "green" if status == "created" else "red"
+        status_text = "Создано" if status == "created" else f"Ошибка: {status}"
+        ttk.Label(row, text=status_text, foreground=status_color, width=30, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(row, text=event_id or "—", width=12, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(row, text=url or "—", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+        ttk.Label(row, text=errors or "—", width=20, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+
+    def _ensure_results_table(self) -> None:
+        if self._results_table is not None:
+            return
+        results_frame = ttk.LabelFrame(self, text="Результаты создания", padding=5)
+        results_frame.pack(fill=tk.X, pady=(10, 0), padx=5)
+        self._results_table = results_frame
+
+        header = ttk.Frame(self._results_table)
+        header.pack(fill=tk.X, pady=(0, 2))
+        ttk.Label(header, text="Draft ID", width=12, anchor=tk.W, font=("", 8, "bold")).pack(side=tk.LEFT, padx=2)
+        ttk.Label(header, text="Subject", width=30, anchor=tk.W, font=("", 8, "bold")).pack(side=tk.LEFT, padx=2)
+        ttk.Label(header, text="Status", width=30, anchor=tk.W, font=("", 8, "bold")).pack(side=tk.LEFT, padx=2)
+        ttk.Label(header, text="Event ID", width=12, anchor=tk.W, font=("", 8, "bold")).pack(side=tk.LEFT, padx=2)
+        ttk.Label(header, text="URL", width=20, anchor=tk.W, font=("", 8, "bold")).pack(side=tk.LEFT, padx=2)
+        ttk.Label(header, text="Errors", width=20, anchor=tk.W, font=("", 8, "bold")).pack(side=tk.LEFT, padx=2)

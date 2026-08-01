@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo, available_timezones
 
 from calendar_planner.domain.models import NormalizedDateTime

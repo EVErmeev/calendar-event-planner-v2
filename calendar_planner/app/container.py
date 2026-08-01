@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
+from calendar_planner.app.mcp_transport import MCPTransport
 from calendar_planner.calendar.mcp_gateway import MCPCalendarGateway
 from calendar_planner.participants.directory_gateway import MCPDirectoryGateway
-from calendar_planner.app.mcp_transport import MCPTransport
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +18,22 @@ class AppContainer:
         self._directory_gateway = None
         self._mcp_transport: MCPTransport | None = None
         self._mcp_initialized = False
+        self._mcp_disabled_or_unavailable = False
         self._init_warnings: list[str] = []
 
+    @property
+    def _is_test_env(self) -> bool:
+        return self.settings.APP_ENV == "test"
+
     def init_mcp(self) -> dict:
-        """Initialize MCP transport and gateways."""
+        """Initialize MCP transport and gateways.
+
+        Stores state clearly:
+          - _mcp_disabled_or_unavailable = True  if MCP is off or not reachable
+          - _mcp_initialized = True              only on full success
+        """
         if not self.settings.MCP_ENABLED:
+            self._mcp_disabled_or_unavailable = True
             self._init_warnings.append("MCP is disabled (MCP_ENABLED=false)")
             return {
                 "component": "MCP",
@@ -32,6 +42,7 @@ class AppContainer:
             }
 
         if not self.settings.MCP_SERVER_URL:
+            self._mcp_disabled_or_unavailable = True
             self._init_warnings.append("MCP_SERVER_URL is empty")
             return {
                 "component": "MCP",
@@ -58,8 +69,10 @@ class AppContainer:
             )
 
             self._mcp_initialized = True
+            self._mcp_disabled_or_unavailable = False
             return result
         else:
+            self._mcp_disabled_or_unavailable = True
             self._init_warnings.append(
                 f"MCP connection failed: {result.get('message', 'unknown')}"
             )
@@ -68,16 +81,32 @@ class AppContainer:
     def get_calendar_gateway(self):
         if self._calendar_gateway is not None:
             return self._calendar_gateway
-        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
-        self._init_warnings.append("Using FixtureCalendarGateway (MCP not available)")
-        return FixtureCalendarGateway()
+
+        if self._is_test_env:
+            from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+            self._init_warnings.append("Using FixtureCalendarGateway (test env)")
+            return FixtureCalendarGateway()
+
+        raise RuntimeError(
+            "MCP not available — calendar gateway is None and APP_ENV is not 'test'. "
+            "Ensure MCP is initialized before calling get_calendar_gateway()."
+        )
 
     def get_directory_gateway(self):
         if self._directory_gateway is not None:
             return self._directory_gateway
-        from calendar_planner.participants.directory_gateway import FixtureDirectoryGateway
-        self._init_warnings.append("Using FixtureDirectoryGateway (MCP not available)")
-        return FixtureDirectoryGateway()
+
+        if self._is_test_env:
+            from calendar_planner.participants.directory_gateway import (
+                FixtureDirectoryGateway,
+            )
+            self._init_warnings.append("Using FixtureDirectoryGateway (test env)")
+            return FixtureDirectoryGateway()
+
+        raise RuntimeError(
+            "MCP not available — directory gateway is None and APP_ENV is not 'test'. "
+            "Ensure MCP is initialized before calling get_directory_gateway()."
+        )
 
     def check_all_connections(self) -> list[dict]:
         """Check MCP, calendar, directory, source accessibility."""

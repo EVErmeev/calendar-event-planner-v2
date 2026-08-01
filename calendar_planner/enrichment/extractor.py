@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from calendar_planner.domain.models import (
-    MeetingCandidate,
     DescriptionItem,
-    ExtractedSource,
     DescriptionItemType,
+    ExtractedSource,
+    MeetingCandidate,
 )
 
 
