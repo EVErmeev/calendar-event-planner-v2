@@ -3,7 +3,7 @@
   "repository": "EVErmeev/calendar-event-planner-v2",
   "default_branch": "master",
   "validated_code_commit": "f65a65b40ac6e7b5fc9171368a15daed0a08985e",
-  "validation_metadata_commit": "TBD-after-push",
+  "validation_metadata_commit": "e39578219732b39c29646545384179b25df43fdf",
   "active_task": "docs/opencode/specifications/2026-08-01_001_fix-initial-audit-findings.md",
   "latest_audit": "docs/opencode/audits/2026-08-01_08fb92d_initial-functional-audit.md",
   "latest_validation": "docs/opencode/validations/2026-08-01_PR1-final-fixes.md",
