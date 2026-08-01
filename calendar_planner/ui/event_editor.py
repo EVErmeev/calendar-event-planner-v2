@@ -126,7 +126,7 @@ class EventEditorFrame(ttk.Frame):
         dur_frame = ttk.LabelFrame(self.scrollable_frame, text="Длительность", padding=10)
         dur_frame.pack(fill=tk.X, pady=5)
 
-        self.duration_var = tk.StringVar(value="60")
+        self.duration_var = tk.StringVar(value="")
         self.end_date_var = tk.StringVar()
         self.end_time_var = tk.StringVar()
 
@@ -265,6 +265,7 @@ class EventEditorFrame(ttk.Frame):
         self.duration_var.set(str(minutes))
         self._update_end_datetime()
         self._mark_stale()
+        self._recalculate_readiness()
 
     def _custom_duration(self) -> None:
         try:
@@ -312,6 +313,12 @@ class EventEditorFrame(ttk.Frame):
             text=f"Match: STALE — требуется проверка дубля | Готовность: {'Да' if self.draft.is_ready else 'Нет'}",
             foreground="red",
         )
+
+    def _recalculate_readiness(self) -> None:
+        from calendar_planner.domain.validation import preflight_validate
+        result = preflight_validate(self.draft)
+        self.draft.is_ready = result.ready
+        self._update_ready_status()
 
     def _update_ready_status(self) -> None:
         from calendar_planner.domain.validation import validate_draft_ready

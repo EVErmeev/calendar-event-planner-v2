@@ -37,6 +37,7 @@ class StageController:
         self._drafts: list[FinalEventDraft] = []
         self._session: RunSession | None = None
         self._creation_results: list[dict] = []
+        self._stage3_diagnostics: dict = {}
 
         self._original_drafts: list[FinalEventDraft] = []
 
@@ -105,6 +106,12 @@ class StageController:
 
     def add_creation_result(self, result: dict) -> None:
         self._creation_results.append(result)
+
+    def set_stage3_diagnostics(self, diagnostics: dict) -> None:
+        self._stage3_diagnostics = diagnostics
+
+    def get_stage3_diagnostics(self) -> dict:
+        return dict(self._stage3_diagnostics)
 
     def get_creation_results(self) -> list[dict]:
         return list(self._creation_results)
@@ -231,6 +238,18 @@ class StageController:
             session.creation_results_json = json.dumps(
                 self._creation_results, ensure_ascii=False, default=str,
             )
+
+        if self._stage3_diagnostics:
+            storage.save_artifact(
+                session.session_id,
+                "stage3_diagnostics.json",
+                self._stage3_diagnostics,
+            )
+            # сохраняем в data stage_3
+            for s in session.stages:
+                if s.name == "comparison":
+                    s.data.update(self._stage3_diagnostics)
+                    break
 
         storage.save_session(session)
         self._session = session

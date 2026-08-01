@@ -19,10 +19,16 @@ class MCPCalendarGateway:
         self._available: bool | None = None
         self._last_response_raw: list[dict] = []
 
+    def _health_probe_params(self) -> dict:
+        tool_lower = self._find_tool.lower()
+        if "exchange" in tool_lower or "find_events" in tool_lower:
+            return {"days_back": 1, "days_ahead": 1}
+        return {"start": "2000-01-01", "end": "2000-01-02"}
+
     def is_available(self) -> bool:
         if self._mcp_call is not None:
             try:
-                self._mcp_call(self._find_tool, {"start": "2000-01-01", "end": "2000-01-02"})
+                self._mcp_call(self._find_tool, self._health_probe_params())
                 self._available = True
             except Exception:
                 self._available = False

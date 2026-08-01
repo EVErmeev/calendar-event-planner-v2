@@ -260,6 +260,10 @@ class MainWindow:
             from calendar_planner.app.settings import settings
             from calendar_planner.calendar.matcher import CalendarMatcher
             calendar_events: list = []
+            tool_name = getattr(calendar_gw, '_find_tool', 'unknown') if calendar_gw else 'unknown'
+            range_start = ""
+            range_end = ""
+            raw_event_count = 0
             if calendar_gw:
                 candidate_dates = [d for c in all_candidates if c.start_date and (d := self._parse_candidate_date(c.start_date)) is not None]
                 buffer = timedelta(days=settings.CALENDAR_DATE_RANGE_BUFFER_DAYS)
@@ -268,9 +272,21 @@ class MainWindow:
                 try:
                     self.root.after(0, lambda: self._show_progress("Получение событий календаря...", 60))
                     calendar_events = calendar_gw.find_events(range_start, range_end)
+                    raw_event_count = len(calendar_gw.get_last_raw_response())
                 except Exception as exc:
                     self.root.after(0, lambda e_=exc: self.info_text.insert(tk.END, f"  Ошибка: {e_}\n"))
                     self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_3", str(e_)))
+                    self.controller.set_stage3_diagnostics({
+                        "tool_name": tool_name,
+                        "range_start": range_start,
+                        "range_end": range_end,
+                        "raw_event_count": 0,
+                        "parsed_event_count": 0,
+                        "duplicate_count": 0,
+                        "new_count": len(all_candidates),
+                        "status": "error",
+                        "error": str(exc),
+                    })
                     return
             if self._cancel_requested: return
             matcher = CalendarMatcher(tolerance_minutes=30, subject_threshold=0.75)
@@ -278,11 +294,47 @@ class MainWindow:
             self.controller.set_matches(matches)
             self.controller.set_calendar_events(calendar_events)
             matched_count = sum(1 for m in matches.values() if m is not None and m.decision.name != "NEW")
-            self.root.after(0, lambda: self.info_text.insert(tk.END, f"  Совпадений: {matched_count}\n"))
-            self.root.after(0, lambda: self.controller.set_stage_success("stage_3"))
+            new_count = sum(1 for m in matches.values() if m is not None and m.decision.name == "NEW")
+            self.root.after(0, lambda: self.info_text.insert(tk.END, f"  Совпадений: {matched_count}, новых: {new_count}\n"))
+            stage3_diag = {
+                "tool_name": tool_name,
+                "range_start": range_start,
+                "range_end": range_end,
+                "raw_event_count": raw_event_count,
+                "parsed_event_count": len(calendar_events),
+                "duplicate_count": matched_count,
+                "new_count": new_count,
+                "status": "success",
+            }
+            if len(calendar_events) == 0:
+                stage3_diag["status"] = "success_with_warnings"
+                stage3_diag["warning"] = "В календаре не найдено событий в указанном диапазоне."
+                self.controller.set_stage3_diagnostics(stage3_diag)
+                self.root.after(0, lambda: self.info_text.insert(
+                    tk.END, "  В календаре не найдено событий в указанном диапазоне.\n",
+                ))
+                self.root.after(0, lambda: self.controller.set_stage_success("stage_3"))
+                self.controller.stages[2].status = StageStatus.SUCCESS_WITH_WARNINGS
+                self.controller.stages[2].warnings.append(
+                    "В календаре не найдено событий в указанном диапазоне."
+                )
+            else:
+                self.controller.set_stage3_diagnostics(stage3_diag)
+                self.root.after(0, lambda: self.controller.set_stage_success("stage_3"))
         except Exception as exc:
             self.root.after(0, lambda e_=exc: self.info_text.insert(tk.END, f"  ОШИБКА этапа 3: {e_}\n"))
             self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_3", str(e_)))
+            self.controller.set_stage3_diagnostics({
+                "tool_name": getattr(calendar_gw, '_find_tool', 'unknown') if 'calendar_gw' in dir() else 'unknown',
+                "range_start": range_start if 'range_start' in dir() else "",
+                "range_end": range_end if 'range_end' in dir() else "",
+                "raw_event_count": 0,
+                "parsed_event_count": 0,
+                "duplicate_count": 0,
+                "new_count": len(all_candidates),
+                "status": "error",
+                "error": str(exc),
+            })
 
         if self._cancel_requested: return
         self.root.after(0, lambda: self._show_progress("Определение участников...", 70))
