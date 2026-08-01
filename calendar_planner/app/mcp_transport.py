@@ -65,7 +65,9 @@ class MCPTransport:
             self._negotiate_version(server_version)
 
             # --- 3. initialized notification ---
-            self._send_notification("notifications/initialized")
+            notification_ok = self._send_notification_verified("notifications/initialized")
+            if not notification_ok:
+                raise MCPProtocolError("Failed to send notifications/initialized — server may not accept notifications")
 
             # --- 4. discover tools (with pagination) ---
             self.tools = self._discover_tools()
@@ -344,6 +346,35 @@ class MCPTransport:
                 )
         except Exception:
             logger.warning("Failed to send notification %s", method, exc_info=True)
+
+    def _send_notification_verified(self, method: str, params: dict | None = None) -> bool:
+        """Send a JSON-RPC notification and verify it was accepted. Returns True if accepted."""
+        if self._session is None:
+            return False
+        payload: dict = {
+            "jsonrpc": "2.0",
+            "method": method,
+        }
+        if params is not None:
+            payload["params"] = params
+        try:
+            response = self._session.post(
+                self.server_url,
+                json=payload,
+                timeout=15,
+            )
+            if response.status_code in (200, 202, 204):
+                logger.info("Notification %s accepted (%d)", method, response.status_code)
+                return True
+            else:
+                logger.error(
+                    "Notification %s rejected with status %d: %s",
+                    method, response.status_code, response.text[:500],
+                )
+                return False
+        except Exception:
+            logger.error("Failed to send notification %s", method, exc_info=True)
+            return False
 
     def _send_initialize(self) -> dict:
         return self._send_request("initialize", {

@@ -8,11 +8,12 @@ from calendar_planner.ui.event_editor import EventEditorFrame
 
 
 class Stage6CreationFrame(ttk.Frame):
-    def __init__(self, parent, drafts: list[FinalEventDraft], on_recheck=None, on_create=None, **kwargs):
+    def __init__(self, parent, drafts: list[FinalEventDraft], on_recheck=None, on_create=None, on_real_create=None, **kwargs):
         super().__init__(parent, **kwargs)
         self.drafts = drafts
         self.on_recheck = on_recheck
         self.on_create = on_create
+        self.on_real_create = on_real_create
         self._editor_frame: EventEditorFrame | None = None
         self._draft_vars: dict[str, tk.BooleanVar] = {}
         self._current_draft: FinalEventDraft | None = None
@@ -135,20 +136,21 @@ class Stage6CreationFrame(ttk.Frame):
     def _build_action_bar(self) -> None:
         bar = ttk.Frame(self)
         bar.pack(fill=tk.X, pady=(10, 0), padx=5)
-        ttk.Button(bar, text="Создать выбранное", command=self._create_selected).pack(side=tk.LEFT, padx=2)
-        ttk.Button(bar, text="Создать отмеченные", command=self._create_checked).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bar, text="Предпросмотр (dry-run)", command=self._create_selected).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bar, text="Предпросмотр отмеченных", command=self._create_checked).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bar, text="Создать выбранное", command=self._real_create_selected).pack(side=tk.LEFT, padx=(20, 2))
+        ttk.Button(bar, text="Создать отмеченные", command=self._real_create_checked).pack(side=tk.LEFT, padx=2)
 
     def _create_selected(self) -> None:
         draft = self._current_draft
         if draft is None:
             from tkinter import messagebox
-            messagebox.showinfo("Информация", "Сначала выберите черновик для создания.")
+            messagebox.showinfo("Информация", "Сначала выберите черновик для предпросмотра.")
             return
-        if self.on_create is None:
-            from tkinter import messagebox
-            messagebox.showinfo("DRY RUN", f"DRY RUN — событие не создано\nDraft: {draft.draft_id}")
-            return
-        self.on_create(draft)
+        if self.on_create is not None:
+            self.on_create(draft)
+        else:
+            self._show_dry_run_result(draft.draft_id, draft.subject.value or "Без темы")
 
     def _create_checked(self) -> None:
         selected = self.get_selected_drafts()
@@ -156,19 +158,53 @@ class Stage6CreationFrame(ttk.Frame):
             from tkinter import messagebox
             messagebox.showinfo("Информация", "Нет отмеченных черновиков.")
             return
-        from tkinter import messagebox
-        count = len(selected)
-        if not messagebox.askyesno(
-            "Подтверждение",
-            f"Создать {count} событий из отмеченных черновиков?",
-        ):
-            return
-        if self.on_create is None:
-            for draft in selected:
-                self._show_dry_run_result(draft.draft_id, draft.subject.value or "Без темы")
-        else:
+        if self.on_create is not None:
             for draft in selected:
                 self.on_create(draft)
+        else:
+            for draft in selected:
+                self._show_dry_run_result(draft.draft_id, draft.subject.value or "Без темы")
+
+    def _real_create_selected(self) -> None:
+        draft = self._current_draft
+        if draft is None:
+            from tkinter import messagebox
+            messagebox.showinfo("Информация", "Сначала выберите черновик.")
+            return
+        from tkinter import messagebox
+        if not messagebox.askyesno(
+            "Подтверждение создания",
+            f"Создать реальное календарное событие?\n\n"
+            f"Тема: {draft.subject.value}\n"
+            f"Дата: {draft.start_date.value} {draft.start_time.value}\n"
+            f"Часовой пояс: {draft.timezone.value}\n\n"
+            f"Это реальная операция создания события в календаре.",
+        ):
+            return
+        if self.on_real_create is None:
+            messagebox.showinfo("Информация", "Создание недоступно — отсутствует подключение к календарю.")
+            return
+        self.on_real_create(draft)
+
+    def _real_create_checked(self) -> None:
+        selected = self.get_selected_drafts()
+        if not selected:
+            from tkinter import messagebox
+            messagebox.showinfo("Информация", "Нет отмеченных черновиков.")
+            return
+        from tkinter import messagebox
+        count = len(selected)
+        subjects = "\n".join(f"  - {d.subject.value}" for d in selected)
+        if not messagebox.askyesno(
+            "Подтверждение создания",
+            f"Создать {count} реальных календарных событий?\n\n{subjects}\n\nЭто реальная операция создания событий в календаре.",
+        ):
+            return
+        if self.on_real_create is None:
+            messagebox.showinfo("Информация", "Создание недоступно — отсутствует подключение к календарю.")
+            return
+        for draft in selected:
+            self.on_real_create(draft)
 
     def _show_dry_run_result(self, draft_id: str, subject: str) -> None:
         self._ensure_results_table()

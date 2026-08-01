@@ -17,6 +17,9 @@ class Stage5EnrichmentFrame(ttk.Frame):
         self._preview_widgets: dict[str, tk.Text] = {}
         self._original_items: dict[str, DescriptionItem] = {}
         self._callbacks: dict[str, list[callable]] = {}
+        for cid, items in self.enrichment.items():
+            for it in items:
+                self._original_items[it.item_id] = DescriptionItem.from_dict(it.to_dict())
         self._build_ui()
 
     def on(self, event: str, callback: callable) -> None:

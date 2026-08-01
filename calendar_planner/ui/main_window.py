@@ -438,7 +438,6 @@ class MainWindow:
         self._stage_frames[3] = frame
 
     def _show_stage_5_content(self) -> None:
-        from calendar_planner.app.settings import settings
         from calendar_planner.ui.stages.stage5_enrichment import Stage5EnrichmentFrame
 
         enrichment = self.controller._enrichment
@@ -448,8 +447,6 @@ class MainWindow:
             self.content_frame,
             enrichment,
             candidates_by_id,
-            performer_domains=settings.PERFORMER_EMAIL_DOMAINS,
-            fuzzy_threshold=settings.CONTACT_FUZZY_THRESHOLD,
         )
         frame.pack(fill=tk.BOTH, expand=True)
         self._stage_frames[4] = frame
@@ -460,8 +457,12 @@ class MainWindow:
         drafts = self.controller.get_drafts()
         on_recheck = self._make_recheck_callback()
         on_create = self._make_create_callback()
+        on_real_create = self._make_real_create_callback()
 
-        frame = Stage6CreationFrame(self.content_frame, drafts, on_recheck=on_recheck, on_create=on_create)
+        frame = Stage6CreationFrame(
+            self.content_frame, drafts,
+            on_recheck=on_recheck, on_create=on_create, on_real_create=on_real_create,
+        )
         frame.pack(fill=tk.BOTH, expand=True)
         self._stage_frames[5] = frame
 
@@ -543,6 +544,56 @@ class MainWindow:
                 )
 
         return create_callback
+
+    def _make_real_create_callback(self):
+        def real_create_callback(draft, frame=None):
+            if self.container is None:
+                messagebox.showwarning("Ошибка", "Контейнер не инициализирован")
+                return
+
+            from tkinter import messagebox
+
+            from calendar_planner.calendar.creator import EventCreator
+
+            calendar_gw = self.container.get_calendar_gateway()
+            if isinstance(calendar_gw, self.container.__class__.__module__.split(".")[0]):
+                messagebox.showerror("Ошибка", "Реальное создание недоступно без MCP-подключения.")
+                return
+
+            # Recheck duplicate before real create
+            on_recheck = self._make_recheck_callback()
+            on_recheck(draft)
+
+            if draft.match_status != "checked":
+                messagebox.showerror("Ошибка", "Не выполнена проверка дубля. Выполните предпросмотр и проверку дубля перед созданием.")
+                return
+
+            creator = EventCreator(calendar_gw, dry_run=False)
+            result = creator.create_one(draft)
+            payload = creator.build_payload(draft)
+
+            # Save to session
+            if hasattr(self.controller, '_creation_results'):
+                self.controller._creation_results.append(result)
+            else:
+                self.controller._creation_results = [result]
+
+            frame_obj = frame if frame is not None else self._stage_frames.get(5)
+            if frame_obj is not None:
+                event_id = result.get("event_id", "") or result.get("result", {}).get("id", "")
+                event_url = result.get("url", "") or result.get("result", {}).get("htmlLink", "")
+                status = result.get("status", "error")
+                errors = ", ".join(result.get("errors", [])) if result.get("errors") else ""
+                frame_obj.show_creation_result(
+                    draft_id=draft.draft_id,
+                    subject=draft.subject.value or "Без темы",
+                    status=status,
+                    event_id=event_id,
+                    url=event_url,
+                    errors=errors,
+                )
+
+        return real_create_callback
 
     def _check_connections(self) -> None:
         if self.container is None:

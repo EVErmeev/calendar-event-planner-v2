@@ -13,9 +13,13 @@ from calendar_planner.domain.models import (
 
 
 class Stage4ParticipantsFrame(ttk.Frame):
-    def __init__(self, parent, participants: list[CandidateParticipants], **kwargs):
+    def __init__(self, parent, participants: list[CandidateParticipants],
+                 performer_domains: list[str] | None = None,
+                 fuzzy_threshold: float = 0.85, **kwargs):
         super().__init__(parent, **kwargs)
         self.participants = participants
+        self.performer_domains = performer_domains or ["1bit.ru"]
+        self.fuzzy_threshold = fuzzy_threshold
         self._callbacks: dict[str, list[callable]] = {}
         self._build_ui()
 

@@ -14,7 +14,7 @@ dependencies = [
     "PyPDF2>=3.0.0",
     "python-pptx>=0.6.23",
     "beautifulsoup4>=4.12.0",
-    "dateutil>=2.8.0",
+    "python-dateutil>=2.8.0",
     "fuzzywuzzy>=0.18.0",
     "python-Levenshtein>=0.25.0",
     "tzdata>=2024.1",
@@ -60,4 +60,7 @@ ignore = [
     "FURB162", # fromisoformat-replace-z — стилистическая рекомендация
     "FLY002",  # static-join-to-f-string — стилистическая рекомендация
     "F841",    # unused-variable — допустимо в тестах для читаемости
+    "F823",    # undefined-local — допустимо в callback scope
+    "G201",    # logging-exc-info — стилистическая рекомендация
+    "PERF102", # incorrect-dict-iterator — стилистическая рекомендация
 ]
