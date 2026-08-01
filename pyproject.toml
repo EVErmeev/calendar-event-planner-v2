@@ -65,4 +65,5 @@ ignore = [
     "F841",    # unused-variable — допустимо в тестах для читаемости
     "G201",    # logging-exc-info — стилистическая рекомендация
     "PERF102", # incorrect-dict-iterator — стилистическая рекомендация
+    "S110",    # try-except-pass — намеренно для cleanup/graceful degradation
 ]

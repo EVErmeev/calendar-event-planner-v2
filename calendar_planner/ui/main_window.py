@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -30,9 +31,39 @@ class MainWindow:
 
     def _build_ui(self) -> None:
         self._build_top_panel()
+        self._build_progress_bar()
         self._build_stage_sidebar()
         self._build_main_area()
         self._build_bottom_panel()
+
+    def _build_progress_bar(self) -> None:
+        self._progress_frame = ttk.Frame(self.root)
+        self._progress_frame.pack(fill=tk.X, padx=5, pady=(0, 0))
+        self._progress_var = tk.DoubleVar(value=0)
+        self._progress_bar = ttk.Progressbar(self._progress_frame, variable=self._progress_var, mode="determinate", length=400)
+        self._progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        self._progress_label = ttk.Label(self._progress_frame, text="", font=("", 8))
+        self._progress_label.pack(side=tk.LEFT)
+        self._cancel_btn = ttk.Button(self._progress_frame, text="Отменить", command=self._cancel_analysis, state=tk.DISABLED)
+        self._cancel_btn.pack(side=tk.RIGHT, padx=5)
+        self._progress_frame.pack_forget()
+        self._cancel_requested = False
+        self._bg_thread: threading.Thread | None = None
+
+    def _show_progress(self, label: str, value: int = 0) -> None:
+        self._progress_frame.pack(fill=tk.X, padx=5, pady=(0, 0))
+        self._progress_var.set(value)
+        self._progress_label.config(text=label)
+        self._cancel_btn.config(state=tk.NORMAL)
+        self._cancel_requested = False
+
+    def _hide_progress(self) -> None:
+        self._progress_frame.pack_forget()
+        self._cancel_btn.config(state=tk.DISABLED)
+
+    def _cancel_analysis(self) -> None:
+        self._cancel_requested = True
+        self._progress_label.config(text="Отмена...")
 
     def _build_top_panel(self) -> None:
         top_frame = ttk.Frame(self.root, padding=5)
@@ -154,11 +185,70 @@ class MainWindow:
             self._update_stage_indicators()
             messagebox.showerror(
                 "Подключения не готовы",
-                "Проверка подключений не пройдена.\n"
-                "Откройте экран «Подключения» или нажмите «Проверить подключения».\n"
-                "Используйте «Определить автоматически» для поиска Exchange MCP.",
+                "Проверка подключений не пройдена.\nОткройте экран «Подключения» или нажмите «Проверить подключения».",
             )
             return
+
+        from calendar_planner.app.settings import settings
+        from calendar_planner.domain.models import SourceReference
+        from calendar_planner.source.registry import registry
+
+        if source.startswith("http"):
+            src_ref = SourceReference(type="url", url=source)
+        else:
+            src_ref = SourceReference(type="file", path=source)
+
+        def bg_work():
+            try:
+                self.root.after(0, lambda: self._show_progress("Чтение источника...", 10))
+                extracted = registry.read_source(src_ref)
+                if self._cancel_requested:
+                    self.root.after(0, lambda: self.info_text.insert(tk.END, "\n[ОТМЕНЕНО]\n"))
+                    self.root.after(0, self._hide_progress)
+                    return
+
+                from calendar_planner.extraction.structured import StructuredExtractor
+                self.root.after(0, lambda: self._show_progress("Поиск встреч...", 30))
+                extractor = StructuredExtractor(date_policy=settings.MEETING_DATE_POLICY)
+                candidates = extractor.extract(extracted)
+                if self._cancel_requested:
+                    self.root.after(0, lambda: self.info_text.insert(tk.END, "\n[ОТМЕНЕНО]\n"))
+                    self.root.after(0, self._hide_progress)
+                    return
+
+                self.root.after(0, lambda: self.info_text.delete(1.0, tk.END))
+                self.root.after(0, lambda: self.info_text.insert(tk.END, f"Анализ источника: {source}\n{'=' * 60}\n"))
+                self.root.after(0, lambda: self.info_text.insert(tk.END, f"Листов: {list(extracted.sheets.keys())}\n\n"))
+
+                all_candidates = []
+                for sheet_name, sheet_cands in candidates.items():
+                    all_candidates.extend(sheet_cands)
+                for c in all_candidates:
+                    self.root.after(0, lambda c=c: self.info_text.insert(tk.END,
+                        f"[{c.candidate_id}] {c.subject[:60]}\n  {c.start_date or '—'} {c.start_time or '—'} {c.timezone or '—'}\n"))
+                self.root.after(0, lambda: self.info_text.insert(tk.END, f"\nНайдено: {len(all_candidates)} кандидатов\n"))
+
+                self.controller.set_extracted(extracted)
+                self.controller.set_candidates(candidates)
+                self.controller.set_skipped_rows(extractor.skipped_rows)
+                self.controller.set_stage_success("stage_2")
+
+                self.root.after(0, lambda: self._show_progress("Сравнение с календарём...", 50))
+                self._run_stages_3_to_6_bg(extracted, all_candidates)
+
+                self.root.after(0, self._hide_progress)
+                self.root.after(0, lambda: self._update_stage_indicators())
+                self.root.after(0, lambda: self.controller.set_current_stage(1))
+                self.root.after(0, self._show_stage_content)
+
+            except Exception as e:
+                self.root.after(0, lambda e_=e: self.info_text.insert(tk.END, f"\nОШИБКА: {e_}\n"))
+                self.root.after(0, lambda e_=e: self.controller.set_stage_error("stage_2", str(e_)))
+                self.root.after(0, self._hide_progress)
+                self.root.after(0, self._update_stage_indicators)
+
+        self._bg_thread = threading.Thread(target=bg_work, daemon=True)
+        self._bg_thread.start()
 
         self.info_text.delete(1.0, tk.END)
         self.info_text.insert(tk.END, f"Анализ источника: {source}\n")
@@ -208,6 +298,90 @@ class MainWindow:
             self.controller.set_stage_error("stage_2", str(e))
             self._update_stage_indicators()
             self._show_stage_content()
+
+    def _run_stages_3_to_6_bg(self, extracted, all_candidates: list) -> None:
+        if self._cancel_requested: return
+        self.root.after(0, lambda: self.info_text.insert(tk.END, "\n[Этап 3] Сравнение с календарём...\n"))
+        try:
+            calendar_gw = self.container.get_calendar_gateway() if self.container else None
+            from datetime import date, timedelta
+
+            from calendar_planner.app.settings import settings
+            from calendar_planner.calendar.matcher import CalendarMatcher
+            calendar_events: list = []
+            if calendar_gw:
+                candidate_dates = [d for c in all_candidates if c.start_date and (d := self._parse_candidate_date(c.start_date)) is not None]
+                buffer = timedelta(days=settings.CALENDAR_DATE_RANGE_BUFFER_DAYS)
+                range_start = (min(candidate_dates) - buffer).isoformat() if candidate_dates else date.today().isoformat()
+                range_end = (max(candidate_dates) + buffer).isoformat() if candidate_dates else (date.today() + timedelta(days=90)).isoformat()
+                try:
+                    self.root.after(0, lambda: self._show_progress("Получение событий календаря...", 60))
+                    calendar_events = calendar_gw.find_events(range_start, range_end)
+                except Exception as exc:
+                    self.root.after(0, lambda e_=exc: self.info_text.insert(tk.END, f"  Ошибка: {e_}\n"))
+                    self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_3", str(e_)))
+                    return
+            if self._cancel_requested: return
+            matcher = CalendarMatcher(tolerance_minutes=30, subject_threshold=0.75)
+            matches = matcher.match_all(all_candidates, calendar_events)
+            self.controller.set_matches(matches)
+            self.controller.set_calendar_events(calendar_events)
+            matched_count = sum(1 for m in matches.values() if m is not None and m.decision.name != "NEW")
+            self.root.after(0, lambda: self.info_text.insert(tk.END, f"  Совпадений: {matched_count}\n"))
+            self.root.after(0, lambda: self.controller.set_stage_success("stage_3"))
+        except Exception as exc:
+            self.root.after(0, lambda e_=exc: self.info_text.insert(tk.END, f"  ОШИБКА этапа 3: {e_}\n"))
+            self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_3", str(e_)))
+
+        if self._cancel_requested: return
+        self.root.after(0, lambda: self._show_progress("Определение участников...", 70))
+        self.root.after(0, lambda: self.info_text.insert(tk.END, "[Этап 4] Участники...\n"))
+        try:
+            directory_gw = self.container.get_directory_gateway() if self.container else None
+            from calendar_planner.participants.resolver import ParticipantResolver
+            resolver = ParticipantResolver(directory_gateway=directory_gw)
+            participants = resolver.resolve(all_candidates, extracted)
+            self.controller.set_participants(participants)
+            self.root.after(0, lambda: self.controller.set_stage_success("stage_4"))
+        except Exception as exc:
+            self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_4", str(e_)))
+
+        if self._cancel_requested: return
+        self.root.after(0, lambda: self._show_progress("Сбор описания...", 80))
+        self.root.after(0, lambda: self.info_text.insert(tk.END, "[Этап 5] Дополнительные данные...\n"))
+        try:
+            from calendar_planner.enrichment.extractor import EnrichmentExtractor
+            enrichment = EnrichmentExtractor().extract(all_candidates, extracted)
+            self.controller.set_enrichment(enrichment)
+            self.root.after(0, lambda: self.controller.set_stage_success("stage_5"))
+        except Exception as exc:
+            self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_5", str(e_)))
+
+        if self._cancel_requested: return
+        self.root.after(0, lambda: self._show_progress("Формирование черновиков...", 90))
+        self.root.after(0, lambda: self.info_text.insert(tk.END, "[Этап 6] Черновики...\n"))
+        try:
+            from calendar_planner.drafts.builder import DraftBuilder
+            participants_map = {p.candidate_id: p for p in self.controller._participants}
+            builder = DraftBuilder()
+            drafts = []
+            for candidate in all_candidates:
+                cp = participants_map.get(candidate.candidate_id)
+                items = self.controller._enrichment.get(candidate.candidate_id, [])
+                draft = builder.build_from_candidate(candidate, cp, items)
+                match_obj = self.controller._matches.get(candidate.candidate_id)
+                if match_obj is not None:
+                    draft.calendar_matches.append(match_obj)
+                    draft.match_status = "checked"
+                    draft.match_input_hash = draft.compute_input_hash()
+                drafts.append(draft)
+            self.controller.set_drafts(drafts)
+            self.root.after(0, lambda: self.controller.set_stage_success("stage_6"))
+            self.root.after(0, lambda: self.info_text.insert(tk.END, f"  Черновиков: {len(drafts)}\n"))
+        except Exception as exc:
+            self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_6", str(e_)))
+
+        self.root.after(0, lambda: self.info_text.insert(tk.END, "\nАнализ завершён.\n"))
 
     def _run_stages_3_to_6(self, extracted, all_candidates: list) -> None:
         self.info_text.insert(tk.END, "\n" + "=" * 60 + "\n")
