@@ -23,7 +23,9 @@ def cmd_check_connections(args: list[str]) -> None:
         print(f"MCP Init: {init_result.get('status', '?')} — {init_result.get('message', '')}")
         print()
 
-    results = container.check_all_connections()
+    check_result = container.check_all_connections()
+    results = check_result.get("results", [])
+    ready = check_result.get("ready_for_analysis", False)
     for r in results:
         symbol = {"success": "[OK]", "warning": "[WARN]", "failed": "[FAIL]"}.get(
             r.get("status", "?"), "[?]"

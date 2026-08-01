@@ -65,8 +65,9 @@ class MainWindow:
         for i, name in enumerate(stage_names):
             frame = ttk.Frame(sidebar)
             frame.pack(fill=tk.X, pady=2)
-            lbl = ttk.Label(frame, text=name, font=("", 9))
+            lbl = ttk.Label(frame, text=name, font=("", 9), cursor="hand2")
             lbl.pack(side=tk.LEFT)
+            lbl.bind("<Button-1>", lambda e, s=i: self._go_to_stage(s))
             st_lbl = ttk.Label(frame, text="●", font=("", 8))
             st_lbl.pack(side=tk.RIGHT, padx=(10, 0))
             self.stage_labels.append(lbl)
@@ -104,6 +105,8 @@ class MainWindow:
         ttk.Button(bottom, text="← Назад", command=self._prev_stage).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Далее →", command=self._next_stage).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Запустить анализ", command=self._run_analysis).pack(side=tk.LEFT, padx=10)
+        ttk.Button(bottom, text="Подключения", command=self._show_stage_1).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bottom, text="Проверить подключения", command=self._check_connections).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Сохранить сессию", command=self._save_session).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bottom, text="Копировать", command=self._copy_results).pack(side=tk.RIGHT, padx=2)
 
@@ -141,11 +144,19 @@ class MainWindow:
             return
 
         stage_1_status = self.controller.get_stage_status(0)
-        if stage_1_status != "success":
+        if stage_1_status == "not_started":
+            self._check_connections()
+            stage_1_status = self.controller.get_stage_status(0)
+
+        if stage_1_status not in ("success", "success_with_warnings"):
+            self.controller.set_current_stage(0)
+            self._show_stage_content()
+            self._update_stage_indicators()
             messagebox.showerror(
-                "Ошибка этапа 1",
-                "Подключения не проверены или проверка завершилась с ошибкой.\n"
-                "Запустите проверку подключений перед анализом.",
+                "Подключения не готовы",
+                "Проверка подключений не пройдена.\n"
+                "Откройте экран «Подключения» или нажмите «Проверить подключения».\n"
+                "Используйте «Определить автоматически» для поиска Exchange MCP.",
             )
             return
 
@@ -348,6 +359,11 @@ class MainWindow:
         self._update_stage_indicators()
         self._show_stage_content()
 
+    def _go_to_stage(self, stage: int) -> None:
+        self.controller.set_current_stage(stage)
+        self._update_stage_indicators()
+        self._show_stage_content()
+
     def _next_stage(self) -> None:
         self.controller.next_stage()
         self._update_stage_indicators()
@@ -387,6 +403,9 @@ class MainWindow:
 
         stage = self.controller.current_stage
 
+        if stage == 0:
+            self._show_stage_1_content()
+
         self.info_text.pack_forget()
 
         if stage == 0:
@@ -406,6 +425,17 @@ class MainWindow:
 
         elif stage == 5:
             self._show_stage_6_content()
+
+    def _show_stage_1_content(self) -> None:
+        from calendar_planner.ui.stages.stage1_connections import Stage1ConnectionsFrame
+        frame = Stage1ConnectionsFrame(self.content_frame, container=self.container)
+        frame.pack(fill=tk.BOTH, expand=True)
+        self._stage_frames[0] = frame
+
+    def _show_stage_1(self) -> None:
+        self.controller.set_current_stage(0)
+        self._update_stage_indicators()
+        self._show_stage_content()
 
     def _show_stage_2_content(self) -> None:
         self.info_text.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -639,58 +669,46 @@ class MainWindow:
         self.info_text.insert(tk.END, "=" * 50 + "\n")
 
         try:
-            results = self.container.check_all_connections()
+            check_result = self.container.check_all_connections()
+            results = check_result.get("results", [])
+            ready = check_result.get("ready_for_analysis", False)
         except Exception as e:
             self.info_text.insert(tk.END, f"\nОШИБКА проверки: {e}\n")
             self.controller.set_stage_error("stage_1", str(e))
             self._update_stage_indicators()
             return
 
-        all_ok = True
         has_errors = False
-
         for r in results:
             component = r.get("component", "?")
             status = r.get("status", "?")
             message = r.get("message", "")
-            symbol = {
-                "success": "[OK]",
-                "warning": "[WARN]",
-                "failed": "[FAIL]",
-            }.get(status, "[?]")
-
+            symbol = {"success": "[OK]", "warning": "[WARN]", "failed": "[FAIL]"}.get(status, "[?]")
             line = f"{symbol} {component}: {message}\n"
             self.info_text.insert(tk.END, line)
-
             if status == "failed":
                 has_errors = True
-                all_ok = False
                 error_text = r.get("error", "")
                 if error_text:
                     self.info_text.insert(tk.END, f"       Ошибка: {error_text}\n")
                 cid = r.get("correlation_id", "")
                 if cid:
                     self.info_text.insert(tk.END, f"       Correlation ID: {cid}\n")
-            elif status == "warning":
-                all_ok = False
 
         self.info_text.insert(tk.END, "\n" + "=" * 50 + "\n")
 
         if has_errors:
             self.controller.set_stage_error("stage_1", "Обнаружены ошибки подключения")
             self.info_text.insert(tk.END, "ИТОГ: Обнаружены ошибки подключения\n")
-        elif not all_ok:
+        elif ready:
+            self.controller.set_stage_success("stage_1")
+            self.info_text.insert(tk.END, "ИТОГ: Подключения готовы к анализу\n")
+        else:
             self.controller.set_stage_success("stage_1")
             self.controller.stages[0].status = StageStatus.SUCCESS_WITH_WARNINGS
             self.info_text.insert(tk.END, "ИТОГ: Подключения работают с предупреждениями\n")
-        else:
-            self.controller.set_stage_success("stage_1")
-            self.info_text.insert(tk.END, "ИТОГ: Все подключения в порядке\n")
 
         self._update_stage_indicators()
-
-        if has_errors:
-            self._show_connection_error_actions(results)
 
     def _show_connection_error_actions(self, results: list[dict]) -> None:
         for widget in self.main_frame.winfo_children():

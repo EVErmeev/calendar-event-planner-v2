@@ -114,65 +114,92 @@ class AppContainer:
             "Ensure MCP is initialized before calling get_directory_gateway()."
         )
 
-    def check_all_connections(self) -> list[dict]:
-        """Check MCP, calendar, directory, source accessibility."""
+    def check_all_connections(self) -> dict:
+        """Check MCP, calendar, directory, source accessibility.
+        Returns dict with ready_for_analysis flag."""
         results: list[dict] = []
+        required_ok = True
 
         results.append(self._check_mcp_transport())
 
         calendar_gw = self._calendar_gateway
         if calendar_gw is not None:
-            results.append(calendar_gw.check_connection())
+            cal_result = calendar_gw.check_connection()
+            results.append(cal_result)
+            if cal_result.get("status") == "failed":
+                required_ok = False
         else:
             results.append({
                 "component": "MCP Calendar",
                 "status": "warning",
                 "message": "Calendar gateway not initialized",
             })
+            required_ok = False
 
         directory_gw = self._directory_gateway
         if directory_gw is not None:
             dir_available = directory_gw.is_available()
-            results.append({
+            dir_result = {
                 "component": "MCP Directory",
                 "status": "success" if dir_available else "failed",
-                "message": (
-                    "Directory service available"
-                    if dir_available
-                    else "Directory service unavailable"
-                ),
-            })
+                "message": "Directory service available" if dir_available else "Directory service unavailable",
+            }
+            results.append(dir_result)
+            if not dir_available:
+                required_ok = False
         else:
             results.append({
                 "component": "MCP Directory",
                 "status": "warning",
                 "message": "Directory gateway not initialized",
             })
+            required_ok = False
 
-        server_url = self.settings.MCP_SERVER_URL
-        if not server_url:
+        transport_ok = self._mcp_transport is not None and self._mcp_transport.is_connected()
+        if not transport_ok:
+            required_ok = False
+
+        using_stdio = bool(self.settings.MCP_STDIO_COMMAND)
+        if using_stdio:
             results.append({
-                "component": "MCP Source URL",
-                "status": "warning",
-                "message": "MCP_SERVER_URL is empty",
+                "component": "MCP Transport Type",
+                "status": "success",
+                "message": "Local stdio transport",
+            })
+        elif self.settings.MCP_SERVER_URL:
+            results.append({
+                "component": "MCP Transport Type",
+                "status": "success",
+                "message": f"HTTP transport: {self.settings.MCP_SERVER_URL[:60]}",
             })
         else:
             results.append({
-                "component": "MCP Source URL",
-                "status": "success",
-                "message": f"Configured: {server_url}",
+                "component": "MCP Transport Type",
+                "status": "failed",
+                "message": "No transport configured (need MCP_STDIO_COMMAND or MCP_SERVER_URL)",
             })
+            required_ok = False
 
-        return results
+        ready = transport_ok and required_ok
+        return {
+            "ready_for_analysis": ready,
+            "required_components_ok": required_ok,
+            "results": results,
+        }
 
     def _check_mcp_transport(self) -> dict:
         if self._mcp_transport is None:
-            if not self.settings.MCP_SERVER_URL:
+            using_stdio = bool(self.settings.MCP_STDIO_COMMAND)
+            using_http = bool(self.settings.MCP_SERVER_URL)
+            if using_stdio:
+                self._mcp_transport = StdioMCPTransport(self.settings.MCP_STDIO_COMMAND)
+            elif using_http:
+                self._mcp_transport = MCPTransport(self.settings.MCP_SERVER_URL)
+            else:
                 return {
                     "component": "MCP Transport",
-                    "status": "warning",
-                    "message": "MCP_SERVER_URL is empty",
+                    "status": "failed",
+                    "message": "MCP transport not configured.",
                 }
-            self._mcp_transport = MCPTransport(self.settings.MCP_SERVER_URL)
 
         return self._mcp_transport.check_connection()
