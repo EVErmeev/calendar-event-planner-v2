@@ -69,6 +69,10 @@ def main() -> None:
         _smoke_gui()
         return
 
+    if "--smoke-startup-mcp" in sys.argv:
+        _smoke_startup_mcp()
+        return
+
     from calendar_planner.app.container import AppContainer
     from calendar_planner.app.settings import settings
 
@@ -87,6 +91,30 @@ def main() -> None:
     root = tk.Tk()
     _app = MainWindow(root, container=container)
     root.mainloop()
+
+
+def _smoke_startup_mcp() -> None:
+    """Smoke test startup with fake MCP transport."""
+    from calendar_planner.app.container import AppContainer
+    from calendar_planner.app.settings import settings
+    from calendar_planner.ui.main_window import MainWindow
+
+    os.environ["APP_ENV"] = "test"
+    os.environ["MCP_ENABLED"] = "true"
+    os.environ["MCP_STDIO_COMMAND"] = "echo fake-mcp>nul"
+    container = AppContainer(settings)
+    container.init_mcp()
+
+    root = tk.Tk()
+    root.title("Smoke MCP Startup Test")
+    app = MainWindow(root, container=container)
+    root.update_idletasks()
+    root.update()
+
+    if container._mcp_transport:
+        container._mcp_transport.close()
+    root.destroy()
+    print("Startup with MCP: OK")
 
 
 def _smoke_gui() -> None:

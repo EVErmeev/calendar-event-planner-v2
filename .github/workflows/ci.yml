@@ -86,3 +86,7 @@ jobs:
       - name: BAT GUI startup smoke
         shell: cmd
         run: call run_calendar_planner.bat --smoke-gui
+
+      - name: BAT startup with stdio MCP
+        shell: cmd
+        run: call run_calendar_planner.bat --smoke-startup-mcp

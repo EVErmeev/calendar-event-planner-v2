@@ -55,7 +55,6 @@ class MainWindow:
         self._progress_var.set(value)
         self._progress_label.config(text=label)
         self._cancel_btn.config(state=tk.NORMAL)
-        self._cancel_requested = False
 
     def _hide_progress(self) -> None:
         self._progress_frame.pack_forget()
@@ -249,55 +248,7 @@ class MainWindow:
 
         self._bg_thread = threading.Thread(target=bg_work, daemon=True)
         self._bg_thread.start()
-
-        self.info_text.delete(1.0, tk.END)
-        self.info_text.insert(tk.END, f"Анализ источника: {source}\n")
-        self.info_text.insert(tk.END, "=" * 60 + "\n")
-
-        try:
-            from calendar_planner.app.settings import settings
-            from calendar_planner.domain.models import SourceReference
-            from calendar_planner.extraction.structured import StructuredExtractor
-            from calendar_planner.source.registry import registry
-
-            if source.startswith("http"):
-                src_ref = SourceReference(type="url", url=source)
-            else:
-                src_ref = SourceReference(type="file", path=source)
-
-            extracted = registry.read_source(src_ref)
-            self.info_text.insert(tk.END, f"Тип: {src_ref.type}\n")
-            self.info_text.insert(tk.END, f"Листов загружено: {list(extracted.sheets.keys())}\n\n")
-
-            extractor = StructuredExtractor(date_policy=settings.MEETING_DATE_POLICY)
-            candidates = extractor.extract(extracted)
-
-            self.controller.set_extracted(extracted)
-            self.controller.set_candidates(candidates)
-            self.controller.set_skipped_rows(extractor.skipped_rows)
-
-            all_candidates = self.controller.get_all_candidates()
-
-            for c in all_candidates:
-                self.info_text.insert(tk.END, (
-                    f"[{c.candidate_id}] {c.subject[:60]}\n"
-                    f"  Дата: {c.start_date or '—'} | Время: {c.start_time or '—'} | TZ: {c.timezone or '—'}\n"
-                ))
-
-            self.info_text.insert(tk.END, f"\nВсего найдено: {len(all_candidates)} кандидатов\n")
-            self.info_text.insert(tk.END, f"Пропущено: {len(extractor.skipped_rows)} строк\n")
-            for sr in extractor.skipped_rows:
-                self.info_text.insert(tk.END, f"  {sr['sheet']} R{sr['row']}: {sr['reason']}\n")
-
-            self.controller.set_stage_success("stage_2")
-
-            self._run_stages_3_to_6(extracted, all_candidates)
-
-        except Exception as e:
-            self.info_text.insert(tk.END, f"\nОШИБКА: {e}\n")
-            self.controller.set_stage_error("stage_2", str(e))
-            self._update_stage_indicators()
-            self._show_stage_content()
+        self._cancel_requested = False
 
     def _run_stages_3_to_6_bg(self, extracted, all_candidates: list) -> None:
         if self._cancel_requested: return

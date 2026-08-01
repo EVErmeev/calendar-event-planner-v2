@@ -26,7 +26,7 @@ class StdioMCPTransport:
     """Connects to a local MCP server via stdin/stdout with timeout protection."""
 
     SUPPORTED_PROTOCOL_VERSIONS: ClassVar[list[str]] = ["2025-03-26"]
-    STDERM_RING_SIZE = 200
+    STDERR_RING_SIZE: ClassVar[int] = 200
 
     def __init__(self, command: str):
         self.command = command
@@ -43,7 +43,7 @@ class StdioMCPTransport:
         self._lock = threading.Lock()
         self._responses: dict[int, Any] = {}
         self._response_events: dict[int, threading.Event] = {}
-        self._stderr_ring: deque[str] = deque(maxlen=self.STERM_RING_SIZE)
+        self._stderr_ring: deque[str] = deque(maxlen=self.STDERR_RING_SIZE)
         self._reader_stop = threading.Event()
         self._connect_timeout = int(os.getenv("MCP_CONNECT_TIMEOUT_SECONDS", "30"))
         self._tool_timeout = int(os.getenv("MCP_TOOL_TIMEOUT_SECONDS", "60"))
