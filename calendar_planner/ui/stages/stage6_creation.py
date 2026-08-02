@@ -234,8 +234,18 @@ class Stage6CreationFrame(ttk.Frame):
 
     def show_creation_result(self, draft_id: str, subject: str, status: str, event_id: str = "", url: str = "", errors: str = "") -> None:
         self._ensure_results_table()
-        status_text = "Создано" if status == "created" else f"Ошибка: {status}"
-        tag = "created" if status == "created" else "failed"
+        if status == "created":
+            status_text = f"Создано" + (f" (ID: {event_id})" if event_id else "")
+            tag = "created"
+        elif status == "dry_run":
+            status_text = "DRY RUN — payload корректен, событие не создано"
+            tag = "dry_run"
+        elif status == "invalid":
+            status_text = "Ошибка валидации"
+            tag = "failed"
+        else:
+            status_text = f"Ошибка: {status}"
+            tag = "failed"
         self._results_tree.insert("", tk.END, values=(
             draft_id,
             subject[:60],
@@ -265,6 +275,7 @@ class Stage6CreationFrame(ttk.Frame):
         self._results_tree.column("errors", width=300, minwidth=100)
 
         self._results_tree.tag_configure("created", foreground="green")
+        self._results_tree.tag_configure("dry_run", foreground="blue")
         self._results_tree.tag_configure("failed", foreground="red")
 
         v_scroll = ttk.Scrollbar(results_frame, orient=tk.VERTICAL, command=self._results_tree.yview)
