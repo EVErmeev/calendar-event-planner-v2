@@ -33,6 +33,21 @@ class EventCreator:
         if draft.online_meeting_url.value:
             payload["online_meeting_url"] = draft.online_meeting_url.value
 
+        attendees = []
+        for att in draft.required_attendees:
+            if att.email:
+                attendees.append(att.email)
+        for att in draft.optional_attendees:
+            if att.email:
+                attendees.append(att.email)
+        if attendees:
+            payload["attendees"] = ",".join(attendees)
+
+        if draft.description.value:
+            payload["body"] = draft.description.value
+        if draft.online_meeting_url.value:
+            payload["online_meeting_url"] = draft.online_meeting_url.value
+
         if draft.description.value:
             payload["body"] = draft.description.value
 
