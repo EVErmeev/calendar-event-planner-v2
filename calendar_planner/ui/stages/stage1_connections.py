@@ -147,7 +147,7 @@ class Stage1ConnectionsFrame(ttk.Frame):
         except Exception as e:
             self._log(f"Ошибка: {e}")
 
-def _save_ews(self):
+    def _save_ews(self):
         endpoint = self._ews_endpoint_var.get().strip()
         login = self._ews_login_var.get().strip()
         password = self._ews_pass_var.get().strip()
@@ -161,24 +161,27 @@ def _save_ews(self):
             self._ews_pass_var.set("")
 
         # Save to .env with password
-        from pathlib import Path
         env_file = Path(__file__).parent.parent.parent.parent / ".env"
         if env_file.exists():
             lines = env_file.read_text(encoding="utf-8").split("\n")
             updates = {"EWS_ENDPOINT": endpoint, "EWS_USERNAME": login}
             if password:
                 updates["EWS_PASSWORD"] = password
-            new = []; seen = set()
+            replaced = set()
+            out_lines = []
             for line in lines:
-                k = line.split("=")[0].strip() if "=" in line else ""
-                if k in updates:
-                    new.append(f"{k}={updates[k]}"); seen.add(k); del updates[k]
-                else: new.append(line)
-            for k, v in updates.items():
-                if v and k not in seen: new.append(f"{k}={v}")
-            env_file.write_text("\n".join(new), encoding="utf-8")
+                key = line.split("=")[0].strip() if "=" in line else ""
+                if key in updates:
+                    out_lines.append(f"{key}={updates[key]}")
+                    replaced.add(key)
+                else:
+                    out_lines.append(line)
+            for key, val in updates.items():
+                if val and key not in replaced:
+                    out_lines.append(f"{key}={val}")
+            env_file.write_text("\n".join(out_lines), encoding="utf-8")
 
-        self._log(f"EWS сохранён. Логин: {login}. Пароль — {'сохранён' if password else 'не указан'}.")
+        self._log(f"EWS saved. Login: {login}.")
 
     def _clear_ews(self):
         self._ews_login_var.set("")
