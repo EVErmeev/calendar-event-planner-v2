@@ -28,35 +28,13 @@ class EventCreator:
                 payload["end"] = f"{end_date} {end_time}"
             payload["timeZone"] = draft.timezone.value or "UTC"
 
-        attendees = []
-        for att in draft.required_attendees:
-            if att.email:
-                attendees.append({
-                    "email": att.email,
-                    "name": att.full_name,
-                    "type": "required",
-                })
-        for att in draft.optional_attendees:
-            if att.email:
-                attendees.append({
-                    "email": att.email,
-                    "name": att.full_name,
-                    "type": "optional",
-                })
-        if attendees:
-            payload["attendees"] = attendees
-
         if draft.location.value:
             payload["location"] = draft.location.value
         if draft.online_meeting_url.value:
             payload["online_meeting_url"] = draft.online_meeting_url.value
 
         if draft.description.value:
-            payload["description"] = draft.description.value
-
-        payload["reminder_minutes"] = draft.reminder_minutes
-        payload["show_as"] = draft.show_as
-        payload["is_private"] = draft.privacy == "private"
+            payload["body"] = draft.description.value
 
         return payload
 
