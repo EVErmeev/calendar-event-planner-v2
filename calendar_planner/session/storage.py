@@ -31,7 +31,7 @@ class SessionStorage:
         return self.base_dir / session_id
 
     def save_session(self, session: RunSession) -> None:
-        session.updated_at = datetime.now().isoformat()
+        session.updated_at = datetime.now(tz=__import__("datetime").timezone.utc).isoformat()
         session_dir = self.get_session_dir(session.session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
 

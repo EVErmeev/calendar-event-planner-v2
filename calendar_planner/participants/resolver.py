@@ -1,27 +1,30 @@
 from __future__ import annotations
 
 from calendar_planner.domain.models import (
-    MeetingCandidate,
     CandidateParticipants,
+    ExtractedSource,
+    MeetingCandidate,
+    ParticipantRole,
+    ParticipantSide,
     ResolvedParticipant,
     UnresolvedParticipant,
-    ParticipantSide,
-    ParticipantRole,
-    ExtractedSource,
+)
+from calendar_planner.participants.contact_index import (
+    ContactIndex,
+    fuzzy_match_surname,
 )
 from calendar_planner.participants.matcher import NameMatcher
-from calendar_planner.participants.contact_index import ContactIndex
 
 
 class ParticipantResolver:
     def __init__(
         self,
         directory_gateway=None,
-        performer_domain: str = "1bit.ru",
+        performer_domains: list[str] | None = None,
         fuzzy_threshold: float = 0.85,
     ):
         self.directory = directory_gateway
-        self.performer_domain = performer_domain
+        self.performer_domains = performer_domains or ["1bit.ru"]
         self.fuzzy_threshold = fuzzy_threshold
         self.name_matcher = NameMatcher(directory_gateway, fuzzy_threshold)
 
@@ -31,7 +34,7 @@ class ParticipantResolver:
         source: ExtractedSource,
     ) -> list[CandidateParticipants]:
         contact_index = ContactIndex()
-        contact_index.build_from_source(source, performer_domain=self.performer_domain)
+        contact_index.build_from_source(source, performer_domain=self.performer_domains[0])
 
         results: list[CandidateParticipants] = []
 
@@ -39,24 +42,30 @@ class ParticipantResolver:
             cp = CandidateParticipants(candidate_id=candidate.candidate_id)
 
             for name in candidate.performer_names:
-                matched = self.name_matcher.match_performer(name)
+                matched, options = self.name_matcher.match_performer_with_options(name)
                 if matched:
                     matched.role = ParticipantRole.REQUIRED
                     cp.performer.append(matched)
-                elif name.strip():
-                    employee_results = self.directory.search(name) if self.directory and self.directory.is_available() else []
+                elif options:
                     cp.unresolved.append(UnresolvedParticipant(
                         source_name=name,
                         side=ParticipantSide.PERFORMER,
-                        reason="Не найдено в каталоге" if not employee_results else "Несколько вариантов",
-                        possible_matches=employee_results[:5],
+                        reason="Несколько вариантов в каталоге",
+                        possible_matches=options[:5],
+                    ))
+                elif name.strip():
+                    cp.unresolved.append(UnresolvedParticipant(
+                        source_name=name,
+                        side=ParticipantSide.PERFORMER,
+                        reason="Не найдено в каталоге",
+                        possible_matches=[],
                     ))
 
             for name in candidate.customer_names:
                 customer_contacts = contact_index.find_by_name(name)
                 contacts_without_performer_domain = [
                     c for c in customer_contacts
-                    if not c.email or self.performer_domain not in (c.email or "")
+                    if not c.email or not any(d in (c.email or "") for d in self.performer_domains)
                 ]
 
                 if len(contacts_without_performer_domain) >= 1:
@@ -79,15 +88,48 @@ class ParticipantResolver:
                         possible_matches=[{"full_name": c.full_name or name, "email": c.email} for c in customer_contacts],
                     ))
                 elif name.strip():
-                    cp.customer.append(ResolvedParticipant(
-                        full_name=name,
-                        email=None,
-                        side=ParticipantSide.CUSTOMER,
-                        role=ParticipantRole.REQUIRED,
-                        source_name=name,
-                        match_source="name_only_no_contact",
-                        confidence=0.3,
-                    ))
+                    fuzzy_candidates: list[tuple] = []
+                    for contact in contact_index.contacts:
+                        if not contact.full_name:
+                            continue
+                        score = fuzzy_match_surname(name, contact.full_name, self.fuzzy_threshold)
+                        if score >= self.fuzzy_threshold:
+                            fuzzy_candidates.append((contact, score))
+
+                    if len(fuzzy_candidates) == 1:
+                        contact, score = fuzzy_candidates[0]
+                        cp.customer.append(ResolvedParticipant(
+                            full_name=contact.full_name or name,
+                            email=contact.email,
+                            side=ParticipantSide.CUSTOMER,
+                            role=ParticipantRole.REQUIRED,
+                            source_name=name,
+                            match_source="fuzzy_match",
+                            confidence=score,
+                            organization=contact.organization,
+                            is_fuzzy_match=True,
+                            fuzzy_score=score,
+                        ))
+                    elif len(fuzzy_candidates) > 1:
+                        cp.unresolved.append(UnresolvedParticipant(
+                            source_name=name,
+                            side=ParticipantSide.CUSTOMER,
+                            reason="Несколько вариантов fuzzy-совпадения",
+                            possible_matches=[
+                                {"full_name": c.full_name, "email": c.email, "fuzzy_score": s}
+                                for c, s in fuzzy_candidates[:5]
+                            ],
+                        ))
+                    else:
+                        cp.customer.append(ResolvedParticipant(
+                            full_name=name,
+                            email=None,
+                            side=ParticipantSide.CUSTOMER,
+                            role=ParticipantRole.REQUIRED,
+                            source_name=name,
+                            match_source="name_only_no_contact",
+                            confidence=0.3,
+                        ))
 
             results.append(cp)
 

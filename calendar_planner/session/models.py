@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
 
 from calendar_planner.domain.enums import RunStatus, StageStatus
 
@@ -54,7 +53,7 @@ class RunSession:
     creation_results_json: str = ""
 
     def __post_init__(self):
-        now = datetime.now().isoformat()
+        now = datetime.now(tz=__import__("datetime").timezone.utc).isoformat()
         if not self.created_at:
             self.created_at = now
         if not self.updated_at:

@@ -1,0 +1,1 @@
+# ТЗ: исправление live Google Sheets, EWS каталога участников, fail-fast, preflight

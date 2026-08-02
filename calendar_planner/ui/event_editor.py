@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk, messagebox
-from datetime import datetime, timedelta
+from tkinter import messagebox, ttk
 
-from calendar_planner.domain.models import FinalEventDraft, ResolvedParticipant, ParticipantRole
 from calendar_planner.domain.enums import ParticipantSide
+from calendar_planner.domain.models import (
+    FinalEventDraft,
+    ParticipantRole,
+    ResolvedParticipant,
+)
 from calendar_planner.drafts.editor import DraftEditor
 from calendar_planner.drafts.hash import compute_draft_hash
 
 
 class EventEditorFrame(ttk.Frame):
-    def __init__(self, parent, draft: FinalEventDraft, on_recheck=None, **kwargs):
+    def __init__(self, parent, draft: FinalEventDraft, on_recheck=None, on_draft_updated=None, **kwargs):
         super().__init__(parent, **kwargs)
         self.draft = draft
+        self._original_draft = FinalEventDraft.from_dict(draft.to_dict())
         self.editor = DraftEditor()
         self.on_recheck = on_recheck
+        self.on_draft_updated = on_draft_updated
 
         self._build_ui()
         self._populate_fields()
@@ -98,15 +103,33 @@ class EventEditorFrame(ttk.Frame):
         self.tz_entry = ttk.Entry(row_frame, textvariable=self.tz_var, width=25)
         self.tz_entry.pack(side=tk.LEFT, padx=(0, 10))
         self.tz_entry.bind("<KeyRelease>", lambda e: self._on_field_changed("timezone"))
+        self.tz_source_label = ttk.Label(row_frame, text="", font=("", 7), foreground="gray")
+        self.tz_source_label.pack(side=tk.LEFT)
 
         self.all_day_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(row_frame, text="Весь день", variable=self.all_day_var).pack(side=tk.LEFT)
+
+        row_frame = ttk.Frame(fields_frame)
+        row_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(row_frame, text="Место:", width=15).pack(side=tk.LEFT)
+        self.location_var = tk.StringVar()
+        self.location_entry = ttk.Entry(row_frame, textvariable=self.location_var, width=40)
+        self.location_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        self.location_entry.bind("<KeyRelease>", lambda e: self._on_field_changed("location"))
+
+        row_frame = ttk.Frame(fields_frame)
+        row_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(row_frame, text="Ссылка:", width=15).pack(side=tk.LEFT)
+        self.url_var = tk.StringVar()
+        self.url_entry = ttk.Entry(row_frame, textvariable=self.url_var, width=40)
+        self.url_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        self.url_entry.bind("<KeyRelease>", lambda e: self._on_field_changed("url"))
 
     def _build_duration_section(self) -> None:
         dur_frame = ttk.LabelFrame(self.scrollable_frame, text="Длительность", padding=10)
         dur_frame.pack(fill=tk.X, pady=5)
 
-        self.duration_var = tk.StringVar(value="60")
+        self.duration_var = tk.StringVar(value="")
         self.end_date_var = tk.StringVar()
         self.end_time_var = tk.StringVar()
 
@@ -122,6 +145,10 @@ class EventEditorFrame(ttk.Frame):
             ).pack(side=tk.LEFT, padx=2)
 
         ttk.Button(preset_frame, text="Другая", command=self._custom_duration, width=8).pack(side=tk.LEFT, padx=2)
+
+        self.custom_duration_var = tk.StringVar()
+        self.custom_duration_entry = ttk.Entry(preset_frame, textvariable=self.custom_duration_var, width=6)
+        self.custom_duration_entry.pack(side=tk.LEFT, padx=2)
 
         ttk.Label(dur_frame, text=f"Текущая: {self._duration_status()}").pack(anchor=tk.W)
 
@@ -201,6 +228,18 @@ class EventEditorFrame(ttk.Frame):
         self.time_var.set(self.draft.start_time.value or "")
         self.tz_var.set(self.draft.timezone.value or "")
 
+        tz_source = ""
+        if self.draft.timezone.evidence:
+            src = self.draft.timezone.evidence[0].get("source", "")
+            if src == "source_column":
+                tz_source = "Источник: заголовок колонки"
+            elif src == "default_value":
+                tz_source = "Источник: значение по умолчанию"
+        self.tz_source_label.config(text=tz_source)
+
+        self.location_var.set(self.draft.location.value or "")
+        self.url_var.set(self.draft.online_meeting_url.value or "")
+
         if self.draft.duration_minutes.value:
             self.duration_var.set(str(self.draft.duration_minutes.value))
 
@@ -239,10 +278,13 @@ class EventEditorFrame(ttk.Frame):
         self.duration_var.set(str(minutes))
         self._update_end_datetime()
         self._mark_stale()
+        self._recalculate_readiness()
+        if self.on_draft_updated:
+            self.on_draft_updated(self.draft)
 
     def _custom_duration(self) -> None:
         try:
-            val = int(self.duration_var.get())
+            val = int(self.custom_duration_var.get() or self.duration_var.get())
             if val > 0:
                 self._set_duration(val)
         except ValueError:
@@ -271,8 +313,15 @@ class EventEditorFrame(ttk.Frame):
             self.editor.edit_time(self.draft, self.time_var.get())
         elif field == "timezone":
             self.editor.edit_timezone(self.draft, self.tz_var.get())
+        elif field == "location":
+            self.editor.edit_location(self.draft, self.location_var.get())
+        elif field == "url":
+            self.editor.edit_url(self.draft, self.url_var.get())
         self._update_end_datetime()
         self._mark_stale()
+        self._recalculate_readiness()
+        if self.on_draft_updated:
+            self.on_draft_updated(self.draft)
 
     def _on_description_changed(self) -> None:
         pass
@@ -283,14 +332,18 @@ class EventEditorFrame(ttk.Frame):
             foreground="red",
         )
 
-    def _update_ready_status(self) -> None:
-        from calendar_planner.domain.validation import validate_draft_ready
-        errors = validate_draft_ready(self.draft)
-        self.draft.is_ready = len(errors) == 0
+    def _recalculate_readiness(self) -> None:
+        self._update_ready_status()
 
-        if errors:
+    def _update_ready_status(self) -> None:
+        from calendar_planner.domain.validation import preflight_validate
+        result = preflight_validate(self.draft)
+        self.draft.is_ready = result.ready
+
+        if not result.ready:
+            messages = [e["message_ru"] for e in result.blocking_errors]
             self.status_label.config(
-                text=f"Ошибки: {'; '.join(errors[:2])}",
+                text=f"Ошибки: {'; '.join(messages[:2])}",
                 foreground="red",
             )
         else:
@@ -312,11 +365,11 @@ class EventEditorFrame(ttk.Frame):
         ttk.Entry(dialog, textvariable=email_var, width=40).pack(pady=5)
 
         ttk.Label(dialog, text="Сторона:").pack()
-        side_var = tk.StringVar(value="customer")
-        ttk.Combobox(dialog, textvariable=side_var, values=["performer", "customer"], state="readonly").pack(pady=5)
+        side_var = tk.StringVar(value="CUSTOMER")
+        ttk.Combobox(dialog, textvariable=side_var, values=["PERFORMER", "CUSTOMER"], state="readonly").pack(pady=5)
 
-        role_var = tk.StringVar(value="required")
-        ttk.Checkbutton(dialog, text="Обязательный", variable=role_var, onvalue="required", offvalue="optional").pack(pady=5)
+        role_var = tk.StringVar(value="REQUIRED")
+        ttk.Checkbutton(dialog, text="Обязательный", variable=role_var, onvalue="REQUIRED", offvalue="OPTIONAL").pack(pady=5)
 
         def add():
             name = name_var.get().strip()
@@ -324,6 +377,15 @@ class EventEditorFrame(ttk.Frame):
             if not name:
                 messagebox.showwarning("Ошибка", "Введите ФИО")
                 return
+
+            if email:
+                existing_emails = {
+                    a.email for a in self.draft.required_attendees + self.draft.optional_attendees
+                    if a.email
+                }
+                if email in existing_emails:
+                    messagebox.showwarning("Дубликат", f"Участник с email {email} уже добавлен")
+                    return
 
             participant = ResolvedParticipant(
                 full_name=name,
@@ -336,6 +398,7 @@ class EventEditorFrame(ttk.Frame):
             self.editor.add_attendee(self.draft, participant, ParticipantRole(role_var.get()))
             self._populate_attendees()
             self._mark_stale()
+            self._recalculate_readiness()
             dialog.destroy()
 
         ttk.Button(dialog, text="Добавить", command=add).pack(pady=15)
@@ -350,6 +413,7 @@ class EventEditorFrame(ttk.Frame):
             self.editor.remove_attendee(self.draft, values[1])
             self._populate_attendees()
             self._mark_stale()
+            self._recalculate_readiness()
 
     def _toggle_role(self) -> None:
         selection = self.attendees_tree.selection()
@@ -362,9 +426,14 @@ class EventEditorFrame(ttk.Frame):
             new_role = ParticipantRole.OPTIONAL if current_role == "Обязательный" else ParticipantRole.REQUIRED
             self.editor.change_attendee_role(self.draft, values[1], new_role)
             self._populate_attendees()
+            self._mark_stale()
+            self._recalculate_readiness()
 
     def _restore_attendees(self) -> None:
+        self.draft.required_attendees = list(self._original_draft.required_attendees)
+        self.draft.optional_attendees = list(self._original_draft.optional_attendees)
         self._populate_attendees()
+        self._mark_stale()
 
     def _save_description(self) -> None:
         text = self.description_text.get(1.0, tk.END).strip()
@@ -381,7 +450,12 @@ class EventEditorFrame(ttk.Frame):
         self._save_description()
 
     def _restore_description(self) -> None:
-        pass
+        original_desc = self._original_draft.description.value or ""
+        self.description_text.delete(1.0, tk.END)
+        self.description_text.insert(tk.END, original_desc)
+        self.editor.edit_description(self.draft, original_desc)
+        self._description_saved = original_desc
+        self._mark_stale()
 
     def _copy_description(self) -> None:
         text = self.description_text.get(1.0, tk.END).strip()
@@ -389,22 +463,43 @@ class EventEditorFrame(ttk.Frame):
         self.clipboard_append(text)
 
     def _recheck_duplicate(self) -> None:
-        self.draft.match_input_hash = compute_draft_hash(self.draft)
-        self.draft.match_status = "checked"
-
         if self.on_recheck:
-            self.on_recheck(self.draft)
+            try:
+                self.on_recheck(self.draft)
+            except Exception:
+                self.draft.match_status = "stale"
+                self.status_label.config(
+                    text="Ошибка проверки дубля",
+                    foreground="red",
+                )
+                self._update_ready_status()
+                return
+            self.draft.match_status = "checked"
+            self.draft.match_input_hash = compute_draft_hash(self.draft)
+        else:
+            self.draft.match_status = "stale"
+            self.status_label.config(
+                text="Callback не задан — проверка дубля невозможна",
+                foreground="orange",
+            )
+            self._update_ready_status()
+            return
 
         self.status_label.config(
             text=f"Проверка дубля выполнена (hash: {self.draft.match_input_hash[:16]}...)",
             foreground="blue",
         )
         self._update_ready_status()
+        if self.on_draft_updated:
+            self.on_draft_updated(self.draft)
 
     def _save_all(self) -> None:
         self._save_description()
         self.draft.match_status = "stale"
+        self._recalculate_readiness()
         self.status_label.config(text="Изменения сохранены. Требуется проверка дубля.", foreground="orange")
+        if self.on_draft_updated:
+            self.on_draft_updated(self.draft)
 
     def get_draft(self) -> FinalEventDraft:
         return self.draft

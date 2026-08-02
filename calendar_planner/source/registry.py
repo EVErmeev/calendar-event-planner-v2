@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from calendar_planner.domain.models import SourceReference, ExtractedSource
+from calendar_planner.domain.models import ExtractedSource, SourceReference
 from calendar_planner.source.adapters.file_adapters import (
-    TxtSourceAdapter,
-    MarkdownSourceAdapter,
-    CsvSourceAdapter,
-    XlsxSourceAdapter,
-    DocxSourceAdapter,
-    PdfSourceAdapter,
-    HtmlSourceAdapter,
-    GoogleSheetsSourceAdapter,
-    GoogleDocsSourceAdapter,
     ConfluenceSourceAdapter,
+    CsvSourceAdapter,
+    DocxSourceAdapter,
+    GoogleDocsSourceAdapter,
+    GoogleSheetsSourceAdapter,
+    HtmlSourceAdapter,
+    MarkdownSourceAdapter,
+    PdfSourceAdapter,
     SharePointSourceAdapter,
+    TxtSourceAdapter,
+    XlsxSourceAdapter,
 )
 
 

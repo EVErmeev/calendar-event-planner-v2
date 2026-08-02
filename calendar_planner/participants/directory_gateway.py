@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import logging
+import uuid
 from typing import Protocol
 
-from calendar_planner.domain.models import ResolvedParticipant, ParticipantSide
+logger = logging.getLogger(__name__)
 
 
 class DirectoryGateway(Protocol):
     def search(self, name: str) -> list[dict]: ...
     def is_available(self) -> bool: ...
+    def get_capability(self) -> str: ...
 
 
 class MCPDirectoryGateway:
@@ -18,8 +21,20 @@ class MCPDirectoryGateway:
     def is_available(self) -> bool:
         return self._mcp_call is not None
 
+    def get_capability(self) -> str:
+        if self._search_tool == "search_employees":
+            return "gal"
+        if self._search_tool == "search_mail_history":
+            return "mail_history"
+        return "unavailable"
+
     def search(self, name: str) -> list[dict]:
+        correlation_id = str(uuid.uuid4())
         if not self._mcp_call:
+            logger.warning(
+                "MCPDirectoryGateway.search: MCP client not configured, returning empty list",
+                extra={"correlation_id": correlation_id, "query_name": name},
+            )
             return []
         try:
             result = self._mcp_call(self._search_tool, {"query": name})
@@ -27,8 +42,17 @@ class MCPDirectoryGateway:
                 return result
             if isinstance(result, dict) and "employees" in result:
                 return result["employees"]
+            logger.warning(
+                "MCPDirectoryGateway.search: unexpected result type=%s",
+                type(result).__name__,
+                extra={"correlation_id": correlation_id, "query_name": name, "result_type": str(type(result))},
+            )
             return []
         except Exception:
+            logger.exception(
+                "MCPDirectoryGateway.search: exception during MCP call",
+                extra={"correlation_id": correlation_id, "query_name": name, "search_tool": self._search_tool},
+            )
             return []
 
 
@@ -44,6 +68,9 @@ class FixtureDirectoryGateway:
 
     def is_available(self) -> bool:
         return True
+
+    def get_capability(self) -> str:
+        return "fixture"
 
     def search(self, name: str) -> list[dict]:
         results = []

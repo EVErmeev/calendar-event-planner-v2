@@ -7,18 +7,19 @@ name = "calendar-event-planner-v2"
 version = "1.0.0"
 description = "Автоматическое формирование календарных событий по произвольному источнику"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
 dependencies = [
     "openpyxl>=3.1.0",
     "python-docx>=1.1.0",
     "PyPDF2>=3.0.0",
     "python-pptx>=0.6.23",
     "beautifulsoup4>=4.12.0",
-    "dateutil>=2.8.0",
+    "python-dateutil>=2.8.0",
     "fuzzywuzzy>=0.18.0",
     "python-Levenshtein>=0.25.0",
     "tzdata>=2024.1",
     "requests>=2.31.0",
+    "requests-ntlm>=1.2.0",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +32,9 @@ dev = [
 
 [project.scripts]
 calendar-planner = "calendar_planner.app.bootstrap:main"
+
+[tool.setuptools.packages.find]
+include = ["calendar_planner*"]
 
 [tool.coverage.run]
 omit = [
@@ -51,3 +55,17 @@ exclude_lines = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+
+[tool.ruff.lint]
+ignore = [
+    "BLE001",  # blind except — намеренно для graceful degradation
+    "DTZ011",  # date.today — допустимо для date-only операций
+    "DTZ007",  # strptime без timezone — допустимо для ISO-парсинга
+    "FURB162", # fromisoformat-replace-z — стилистическая рекомендация
+    "FLY002",  # static-join-to-f-string — стилистическая рекомендация
+    "F841",    # unused-variable — допустимо в тестах для читаемости
+    "G201",    # logging-exc-info — стилистическая рекомендация
+    "PERF102", # incorrect-dict-iterator — стилистическая рекомендация
+    "S110",    # try-except-pass — намеренно для cleanup/graceful degradation
+    "DTZ001",  # naive datetime — допустимо в тестовых фикстурах
+]

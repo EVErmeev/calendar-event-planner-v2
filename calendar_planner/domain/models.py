@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import zoneinfo
 from dataclasses import dataclass, field
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from .enums import (
-    DraftFieldOrigin,
+    DescriptionItemType,
     MatchDecision,
     ParticipantRole,
     ParticipantSide,
-    StageStatus,
-    DescriptionItemType,
 )
 
 
@@ -84,6 +83,11 @@ class StructuredMeetingRow:
     performer_names: list[str] = field(default_factory=list)
     customer_names: list[str] = field(default_factory=list)
     timezone: str | None = None
+    timezone_source: str = "missing"
+    timezone_confirmed: bool = False
+    duration_minutes: int | None = None
+    duration_source: str = "missing"
+    duration_confirmed: bool = False
     raw_cells: dict[str, str] = field(default_factory=dict)
     description_lines: list[str] = field(default_factory=list)
     links: list[str] = field(default_factory=list)
@@ -103,6 +107,11 @@ class StructuredMeetingRow:
             "performer_names": self.performer_names,
             "customer_names": self.customer_names,
             "timezone": self.timezone,
+            "timezone_source": self.timezone_source,
+            "timezone_confirmed": self.timezone_confirmed,
+            "duration_minutes": self.duration_minutes,
+            "duration_source": self.duration_source,
+            "duration_confirmed": self.duration_confirmed,
             "description_lines": self.description_lines,
             "links": self.links,
             "location": self.location,
@@ -120,6 +129,8 @@ class MeetingCandidate:
     duration_minutes: int | None = None
     duration_source: str = "missing"
     duration_confirmed: bool = False
+    timezone_source: str = "missing"
+    timezone_confirmed: bool = False
     performer_names: list[str] = field(default_factory=list)
     customer_names: list[str] = field(default_factory=list)
     location: str | None = None
@@ -155,6 +166,8 @@ class MeetingCandidate:
             "duration_minutes": self.duration_minutes,
             "duration_source": self.duration_source,
             "duration_confirmed": self.duration_confirmed,
+            "timezone_source": self.timezone_source,
+            "timezone_confirmed": self.timezone_confirmed,
             "performer_names": self.performer_names,
             "customer_names": self.customer_names,
             "location": self.location,
@@ -182,6 +195,8 @@ class MeetingCandidate:
             duration_minutes=data.get("duration_minutes"),
             duration_source=data.get("duration_source", "missing"),
             duration_confirmed=data.get("duration_confirmed", False),
+            timezone_source=data.get("timezone_source", "missing"),
+            timezone_confirmed=data.get("timezone_confirmed", False),
             performer_names=data.get("performer_names", []),
             customer_names=data.get("customer_names", []),
             location=data.get("location"),
@@ -230,22 +245,28 @@ class CalendarEvent:
 @dataclass
 class CalendarMatch:
     candidate_id: str
-    calendar_event: CalendarEvent
+    calendar_event: CalendarEvent | None
     decision: MatchDecision
     score: float
     time_diff_minutes: int | None
     subject_similarity: float
     details: dict = field(default_factory=dict)
+    user_decision: str | None = None
+    decision_origin: str = "auto"
+    best_rejected: dict | None = None
 
     def to_dict(self) -> dict:
         return {
             "candidate_id": self.candidate_id,
-            "calendar_event": self.calendar_event.to_dict(),
+            "calendar_event": self.calendar_event.to_dict() if self.calendar_event is not None else None,
             "decision": self.decision.value,
             "score": self.score,
             "time_diff_minutes": self.time_diff_minutes,
             "subject_similarity": self.subject_similarity,
             "details": self.details,
+            "user_decision": self.user_decision,
+            "decision_origin": self.decision_origin,
+            "best_rejected": self.best_rejected,
         }
 
 
@@ -582,3 +603,19 @@ class ExtractedSource:
             "links": self.links,
             "merged_cells": self.merged_cells,
         }
+
+
+def calculate_end_datetime(
+    start_date: str,
+    start_time: str,
+    timezone: str,
+    duration_minutes: int,
+) -> tuple[str, str]:
+    naive = datetime.fromisoformat(f"{start_date}T{start_time}")
+    try:
+        tz = zoneinfo.ZoneInfo(timezone)
+    except Exception:
+        tz = zoneinfo.ZoneInfo("UTC")
+    aware = naive.replace(tzinfo=tz)
+    end = aware + timedelta(minutes=duration_minutes)
+    return end.strftime("%Y-%m-%d"), end.strftime("%H:%M")

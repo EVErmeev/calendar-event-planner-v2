@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 
 
 def cmd_check_connections(args: list[str]) -> None:
+    from calendar_planner.app.container import AppContainer
     from calendar_planner.app.settings import settings
-    from calendar_planner.calendar.mcp_gateway import MCPCalendarGateway
 
     print("=== Проверка подключений ===")
     print(f"MCP Enabled: {settings.MCP_ENABLED}")
@@ -15,6 +14,30 @@ def cmd_check_connections(args: list[str]) -> None:
     print(f"Find Tool: {settings.MCP_CALENDAR_FIND_TOOL}")
     print(f"Create Tool: {settings.MCP_CALENDAR_CREATE_TOOL}")
     print(f"Directory Tool: {settings.MCP_DIRECTORY_SEARCH_TOOL}")
+    print()
+
+    container = AppContainer(settings)
+
+    if settings.MCP_ENABLED:
+        init_result = container.init_mcp()
+        print(f"MCP Init: {init_result.get('status', '?')} — {init_result.get('message', '')}")
+        print()
+
+    check_result = container.check_all_connections()
+    results = check_result.get("results", [])
+    ready = check_result.get("ready_for_analysis", False)
+    for r in results:
+        symbol = {"success": "[OK]", "warning": "[WARN]", "failed": "[FAIL]"}.get(
+            r.get("status", "?"), "[?]"
+        )
+        print(f"{symbol} {r.get('component', '?')}: {r.get('message', '')}")
+        error = r.get("error", "")
+        if error:
+            print(f"       Ошибка: {error}")
+        cid = r.get("correlation_id", "")
+        if cid:
+            print(f"       Correlation ID: {cid}")
+
     print("=== Проверка завершена ===")
 
 
@@ -28,10 +51,10 @@ def cmd_analyze(args: list[str]) -> None:
         print("Usage: python -m calendar_planner.cli analyze --source=<path_or_url>")
         return
 
-    from calendar_planner.domain.models import SourceReference
-    from calendar_planner.source.registry import registry
-    from calendar_planner.extraction.structured import StructuredExtractor
     from calendar_planner.app.settings import settings
+    from calendar_planner.domain.models import SourceReference
+    from calendar_planner.extraction.structured import StructuredExtractor
+    from calendar_planner.source.registry import registry
 
     print(f"=== Анализ источника: {source_path} ===")
     source = SourceReference(type="file", path=source_path)
@@ -58,18 +81,22 @@ def cmd_analyze(args: list[str]) -> None:
 
 def cmd_compare(args: list[str]) -> None:
     session_id = None
+    fixture_path = None
     for arg in args:
         if arg.startswith("--session="):
             session_id = arg.split("=", 1)[1]
+        elif arg.startswith("--fixture-calendar="):
+            fixture_path = arg.split("=", 1)[1]
 
     if not session_id:
-        print("Usage: python -m calendar_planner.cli compare --session=<id>")
+        print("Usage: python -m calendar_planner.cli compare --session=<id> [--fixture-calendar=<path>]")
         return
 
-    from calendar_planner.session.storage import SessionStorage
-    from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+    from calendar_planner.app.container import AppContainer
+    from calendar_planner.app.settings import settings
     from calendar_planner.calendar.matcher import CalendarMatcher
     from calendar_planner.domain.models import MeetingCandidate
+    from calendar_planner.session.storage import SessionStorage
 
     storage = SessionStorage()
     session = storage.load_session(session_id)
@@ -78,8 +105,29 @@ def cmd_compare(args: list[str]) -> None:
         return
 
     print("=== Сравнение с календарём ===")
-    calendar = FixtureCalendarGateway()
-    matcher = CalendarMatcher(tolerance_minutes=30, subject_threshold=0.75)
+
+    if fixture_path:
+        from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
+        calendar = FixtureCalendarGateway(fixture_path=fixture_path)
+        print(f"Режим: фикстура ({fixture_path})")
+    else:
+        container = AppContainer(settings)
+        container.init_mcp()
+        if container._calendar_gateway is None:
+            print("ОШИБКА: календарь MCP недоступен. Проверьте подключение или используйте --fixture-calendar=<path>")
+            return
+        calendar = container.get_calendar_gateway()
+        if not calendar.is_available():
+            print("ОШИБКА: календарь MCP недоступен. Проверьте подключение или используйте --fixture-calendar=<path>")
+            return
+        if container._init_warnings:
+            for w in container._init_warnings:
+                print(f"  [WARN] {w}")
+
+    matcher = CalendarMatcher(
+        tolerance_minutes=settings.CALENDAR_MATCH_TOLERANCE_MINUTES,
+        subject_threshold=settings.CALENDAR_SUBJECT_THRESHOLD,
+    )
 
     candidates_data = json.loads(session.candidates_json) if session.candidates_json else []
     candidates = [MeetingCandidate.from_dict(c) for c in candidates_data]
@@ -92,22 +140,188 @@ def cmd_compare(args: list[str]) -> None:
     print(f"Событий в календаре: {len(events)}")
 
     matches = matcher.match_all(candidates, events)
+    results: list[dict] = []
     for cid, match in matches.items():
-        if match and match.calendar_event:
-            print(f"  {cid}: {match.decision.value} (score={match.score:.2f})")
-        elif match:
-            print(f"  {cid}: {match.decision.value}")
+        if match is not None:
+            result = {
+                "candidate_id": cid,
+                "decision": match.decision.value,
+                "score": match.score,
+                "time_diff_minutes": match.time_diff_minutes,
+                "subject_similarity": match.subject_similarity,
+                "calendar_event_subject": match.calendar_event.subject if match.calendar_event is not None else None,
+            }
+            results.append(result)
+            if match.calendar_event is not None:
+                print(f"  {cid}: {match.decision.value} (score={match.score:.2f}, event={match.calendar_event.subject})")
+            else:
+                print(f"  {cid}: {match.decision.value}")
         else:
+            results.append({"candidate_id": cid, "decision": "not_checked"})
             print(f"  {cid}: не проверено")
+
+    storage.save_artifact(session_id, "compare_results.json", results)
+    print(f"\nРезультаты сохранены в: {storage.get_session_dir(session_id) / 'compare_results.json'}")
 
 
 def cmd_resolve_participants(args: list[str]) -> None:
+    session_id = None
+    for arg in args:
+        if arg.startswith("--session="):
+            session_id = arg.split("=", 1)[1]
+
+    if not session_id:
+        print("Usage: python -m calendar_planner.cli resolve-participants --session=<id>")
+        return
+
+    from calendar_planner.app.container import AppContainer
+    from calendar_planner.app.settings import settings
+    from calendar_planner.domain.models import (
+        ExtractedSource,
+        MeetingCandidate,
+        SourceReference,
+    )
+    from calendar_planner.participants.resolver import ParticipantResolver
+    from calendar_planner.session.storage import SessionStorage
+
+    storage = SessionStorage()
+    session = storage.load_session(session_id)
+    if not session:
+        print(f"Сессия {session_id} не найдена")
+        return
+
     print("=== Разрешение участников ===")
-    print("Режим CLI: участники загружаются из сохранённой сессии")
+
+    candidates_data = json.loads(session.candidates_json) if session.candidates_json else []
+    candidates = [MeetingCandidate.from_dict(c) for c in candidates_data]
+
+    if not candidates:
+        print("Нет кандидатов для разрешения участников")
+        return
+
+    source_data = storage.load_artifact(session_id, "source_extracted.json")
+    if source_data:
+        source = ExtractedSource(
+            source=SourceReference(
+                type=session.source_ref.get("type", "memory"),
+                path=session.source_ref.get("path"),
+                url=session.source_ref.get("url"),
+            ),
+            sheets=source_data.get("sheets", {}),
+            metadata=source_data.get("metadata", {}),
+        )
+    else:
+        source = ExtractedSource(source=SourceReference(type="memory"))
+
+    container = AppContainer(settings)
+    container.init_mcp()
+    if container._directory_gateway is None:
+        print("ОШИБКА: сервис справочника MCP недоступен. Проверьте подключение MCP.")
+        return
+    directory_gw = container.get_directory_gateway()
+
+    if container._init_warnings:
+        for w in container._init_warnings:
+            print(f"  [WARN] {w}")
+
+    resolver = ParticipantResolver(
+        directory_gateway=directory_gw,
+        performer_domains=settings.PERFORMER_EMAIL_DOMAINS,
+        fuzzy_threshold=settings.CONTACT_FUZZY_THRESHOLD,
+    )
+
+    participant_results = resolver.resolve(candidates, source)
+
+    for cp in participant_results:
+        perf_count = len(cp.performer)
+        cust_count = len(cp.customer)
+        unres_count = len(cp.unresolved)
+        print(f"  {cp.candidate_id}: {perf_count} исп., {cust_count} зак., {unres_count} неопр.")
+
+    session.participants_json = json.dumps(
+        [cp.to_dict() for cp in participant_results],
+        ensure_ascii=False,
+        default=str,
+    )
+    storage.save_session(session)
+
+    storage.save_artifact(
+        session_id,
+        "participants_results.json",
+        [cp.to_dict() for cp in participant_results],
+    )
+    print(f"\nРезультаты сохранены в: {storage.get_session_dir(session_id) / 'participants_results.json'}")
 
 
 def cmd_enrich(args: list[str]) -> None:
+    session_id = None
+    for arg in args:
+        if arg.startswith("--session="):
+            session_id = arg.split("=", 1)[1]
+
+    if not session_id:
+        print("Usage: python -m calendar_planner.cli enrich --session=<id>")
+        return
+
+    from calendar_planner.domain.models import (
+        ExtractedSource,
+        MeetingCandidate,
+        SourceReference,
+    )
+    from calendar_planner.enrichment.extractor import EnrichmentExtractor
+    from calendar_planner.session.storage import SessionStorage
+
+    storage = SessionStorage()
+    session = storage.load_session(session_id)
+    if not session:
+        print(f"Сессия {session_id} не найдена")
+        return
+
     print("=== Обогащение описания ===")
+
+    candidates_data = json.loads(session.candidates_json) if session.candidates_json else []
+    candidates = [MeetingCandidate.from_dict(c) for c in candidates_data]
+
+    if not candidates:
+        print("Нет кандидатов для обогащения")
+        return
+
+    source_data = storage.load_artifact(session_id, "source_extracted.json")
+    if source_data:
+        source = ExtractedSource(
+            source=SourceReference(
+                type=session.source_ref.get("type", "memory"),
+                path=session.source_ref.get("path"),
+                url=session.source_ref.get("url"),
+            ),
+            sheets=source_data.get("sheets", {}),
+            metadata=source_data.get("metadata", {}),
+        )
+    else:
+        source = ExtractedSource(source=SourceReference(type="memory"))
+
+    extractor = EnrichmentExtractor()
+    enrichment_map = extractor.extract(candidates, source)
+
+    total_items = 0
+    for cid, items in enrichment_map.items():
+        total_items += len(items)
+        print(f"  {cid}: {len(items)} элементов описания")
+
+    session.enrichment_json = json.dumps(
+        {cid: [i.to_dict() for i in items] for cid, items in enrichment_map.items()},
+        ensure_ascii=False,
+        default=str,
+    )
+    storage.save_session(session)
+
+    storage.save_artifact(
+        session_id,
+        "enrichment_results.json",
+        {cid: [i.to_dict() for i in items] for cid, items in enrichment_map.items()},
+    )
+    print(f"\nВсего элементов: {total_items}")
+    print(f"Результаты сохранены в: {storage.get_session_dir(session_id) / 'enrichment_results.json'}")
 
 
 def cmd_preview(args: list[str]) -> None:
@@ -120,10 +334,11 @@ def cmd_preview(args: list[str]) -> None:
         print("Usage: python -m calendar_planner.cli preview --session=<id>")
         return
 
-    from calendar_planner.session.storage import SessionStorage
+    from calendar_planner.app.container import AppContainer
+    from calendar_planner.app.settings import settings
     from calendar_planner.calendar.creator import EventCreator
-    from calendar_planner.calendar.fixture_gateway import FixtureCalendarGateway
     from calendar_planner.domain.models import FinalEventDraft
+    from calendar_planner.session.storage import SessionStorage
 
     storage = SessionStorage()
     session = storage.load_session(session_id)
@@ -132,6 +347,20 @@ def cmd_preview(args: list[str]) -> None:
         return
 
     print("=== Предпросмотр (dry-run) ===")
+
+    container = AppContainer(settings)
+    container.init_mcp()
+
+    if container._calendar_gateway is None:
+        print("ОШИБКА: календарь MCP недоступен. Проверьте подключение MCP.")
+        return
+
+    calendar = container.get_calendar_gateway()
+
+    if not calendar.is_available():
+        print("ОШИБКА: календарь недоступен. Проверьте подключение MCP.")
+        return
+
     drafts_data = json.loads(session.drafts_json) if session.drafts_json else []
     drafts = [FinalEventDraft.from_dict(d) for d in drafts_data]
 
@@ -139,7 +368,8 @@ def cmd_preview(args: list[str]) -> None:
         print("Нет черновиков для предпросмотра")
         return
 
-    creator = EventCreator(FixtureCalendarGateway(), dry_run=True)
+    creator = EventCreator(calendar, dry_run=True)
+    previews: list[dict] = []
 
     for draft in drafts:
         if draft.selected and draft.is_ready:
@@ -149,6 +379,20 @@ def cmd_preview(args: list[str]) -> None:
             print(f"\n{draft.draft_id}: {draft.subject.value}")
             print(f"  Статус: {status}")
             print(f"  Payload: {json.dumps(payload, ensure_ascii=False, indent=4)}")
+            previews.append({
+                "draft_id": draft.draft_id,
+                "subject": draft.subject.value,
+                "status": status,
+                "errors": errors,
+                "payload": payload,
+            })
+
+    if not previews:
+        print("\nНет выбранных и готовых черновиков для предпросмотра")
+        return
+
+    storage.save_artifact(session_id, "preview_results.json", previews)
+    print(f"\nРезультаты сохранены в: {storage.get_session_dir(session_id) / 'preview_results.json'}")
 
 
 def cmd_create(args: list[str]) -> None:
@@ -164,13 +408,108 @@ def cmd_create(args: list[str]) -> None:
         elif arg == "--confirm-create":
             confirm = True
 
-    if not confirm:
-        print("ОШИБКА: --confirm-create не указан")
-        print("Реальное создание событий ЗАПРЕЩЕНО без --confirm-create")
+    if not session_id or not draft_id:
+        print("Usage: python -m calendar_planner.cli create --session=<id> --draft-id=<id> [--confirm-create]")
+        return
+
+    from calendar_planner.app.container import AppContainer
+    from calendar_planner.app.settings import settings
+    from calendar_planner.calendar.creator import EventCreator
+    from calendar_planner.domain.models import FinalEventDraft
+    from calendar_planner.session.storage import SessionStorage
+
+    storage = SessionStorage()
+    session = storage.load_session(session_id)
+    if not session:
+        print(f"Сессия {session_id} не найдена")
+        return
+
+    drafts_data = json.loads(session.drafts_json) if session.drafts_json else []
+    drafts = [FinalEventDraft.from_dict(d) for d in drafts_data]
+
+    target = None
+    for d in drafts:
+        if d.draft_id == draft_id:
+            target = d
+            break
+
+    if target is None:
+        print(f"Черновик {draft_id} не найден в сессии {session_id}")
         return
 
     print(f"=== Создание события: {draft_id} (сессия {session_id}) ===")
-    print("Событие создано (режим подтверждён)")
+    print(f"Тема: {target.subject.value}")
+
+    if not target.is_ready:
+        print("ОШИБКА: черновик не помечен как готовый (is_ready=false).")
+        print("  Выполните проверку и подтвердите готовность перед созданием.")
+        return
+
+    if not target.selected:
+        print("ОШИБКА: черновик не выбран (selected=false).")
+        return
+
+    if not target.subject.value or not target.start_date.value:
+        print("ОШИБКА: отсутствуют обязательные поля (тема или дата).")
+        return
+
+    container = AppContainer(settings)
+    container.init_mcp()
+
+    if container._calendar_gateway is None:
+        print("ОШИБКА: календарь MCP недоступен. Проверьте подключение MCP.")
+        return
+
+    calendar = container.get_calendar_gateway()
+
+    if not confirm and not calendar.is_available():
+        print("ОШИБКА: календарь MCP недоступен. Проверьте подключение.")
+        return
+
+    if container._init_warnings:
+        for w in container._init_warnings:
+            print(f"  [WARN] {w}")
+
+    dry_run = not confirm
+    creator = EventCreator(calendar, dry_run=dry_run)
+
+    result = creator.create_one(target)
+    payload = creator.build_payload(target)
+    errors = creator.validate_payload(payload)
+
+    print(f"\nРежим: {'dry-run' if dry_run else 'ПОДТВЕРЖДЕНО'}")
+    print(f"Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+
+    if errors:
+        print(f"\nОШИБКИ валидации: {errors}")
+
+    status = result.get("status", "unknown")
+    message = result.get("message", "")
+    event_id = result.get("event_id", "")
+    print(f"\nСтатус: {status}")
+    if message:
+        print(f"Сообщение: {message}")
+    if event_id:
+        print(f"ID события: {event_id}")
+
+    result_with_payload = {
+        "draft_id": draft_id,
+        "session_id": session_id,
+        "dry_run": dry_run,
+        "timestamp": __import__("datetime").datetime.now().isoformat(),
+        "status": status,
+        "message": message,
+        "event_id": event_id,
+        "errors": errors,
+        "payload": payload,
+    }
+
+    if not dry_run:
+        session.creation_results_json = json.dumps(result_with_payload, ensure_ascii=False)
+        storage.save_session(session)
+
+    storage.save_artifact(session_id, f"creation_result_{draft_id}.json", result_with_payload)
+    print(f"\nРезультаты сохранены в: {storage.get_session_dir(session_id) / f'creation_result_{draft_id}.json'}")
 
 
 def main() -> None:

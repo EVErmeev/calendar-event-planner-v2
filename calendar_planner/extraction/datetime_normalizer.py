@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, available_timezones
 
 from calendar_planner.domain.models import NormalizedDateTime
@@ -159,6 +159,9 @@ def normalize_date_value(value: str) -> str | None:
     if re.match(r"^\d{4}-\d{2}-\d{2}$", cleaned):
         return cleaned
 
+    if re.match(r"^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}$", cleaned):
+        return cleaned[:10]
+
     if re.match(r"^\d{2}/\d{2}/\d{4}$", cleaned):
         month, day, year = cleaned.split("/")
         return f"{year}-{month}-{day}"
@@ -177,7 +180,8 @@ def normalize_time_value(value: str) -> str | None:
         return f"{int(hour):02d}:{minute}"
 
     if re.match(r"^\d{1,2}:\d{2}:\d{2}$", cleaned):
-        return cleaned
+        hour, minute, _ = cleaned.split(":")
+        return f"{int(hour):02d}:{minute}"
 
     if re.match(r"^\d{1,2}\.\d{2}$", cleaned):
         hour, minute = cleaned.split(".")

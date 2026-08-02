@@ -1,19 +1,32 @@
 from __future__ import annotations
 
-from calendar_planner.domain.models import MeetingCandidate, StructuredMeetingRow, ExtractedSource
+import logging
+
+_log = logging.getLogger(__name__)
+import re
+
 from calendar_planner.domain.enums import MeetingDatePolicy
+from calendar_planner.domain.models import (
+    ExtractedSource,
+    MeetingCandidate,
+    StructuredMeetingRow,
+)
+from calendar_planner.extraction.datetime_normalizer import (
+    normalize_date_value,
+    normalize_time_value,
+)
 from calendar_planner.source.schema_detector import (
     TableSchemaDetector,
+    detect_timezone_from_text,
     parse_names,
     split_subject_and_description,
-    detect_timezone_from_text,
 )
-from calendar_planner.extraction.datetime_normalizer import normalize_date_value, normalize_time_value
 
 
 class StructuredExtractor:
-    def __init__(self, date_policy: MeetingDatePolicy = MeetingDatePolicy.AGREED_ONLY):
+    def __init__(self, date_policy: MeetingDatePolicy = MeetingDatePolicy.AGREED_ONLY, numeric_duration_unit: str = "auto"):
         self.date_policy = date_policy
+        self.numeric_duration_unit = numeric_duration_unit
         self.skipped_rows: list[dict] = []
 
     def extract(self, source: ExtractedSource) -> dict[str, list[MeetingCandidate]]:
@@ -94,6 +107,13 @@ class StructuredExtractor:
         if detector.actual_time_col is not None and detector.actual_time_col < len(row):
             sr.actual_time = normalize_time_value(row[detector.actual_time_col])
 
+        if detector.duration_col is not None and detector.duration_col < len(row):
+            dur_cell = row[detector.duration_col]
+            parsed = self._parse_duration_cell(dur_cell, unit=self.numeric_duration_unit)
+            sr.duration_minutes = parsed
+            sr.duration_source = "source_column"
+            sr.duration_confirmed = parsed is not None
+
         if detector.performer_col is not None and detector.performer_col < len(row):
             sr.performer_names = parse_names(row[detector.performer_col])
         if detector.customer_col is not None and detector.customer_col < len(row):
@@ -103,14 +123,73 @@ class StructuredExtractor:
             if col < len(row) and row[col]:
                 sr.links.append(row[col])
 
-        if detector.header_timezone:
+        tz_from_col = False
+        if detector.agreed_time_col is not None and detector.agreed_time_col in detector.column_timezones:
+            sr.timezone = detector.column_timezones[detector.agreed_time_col]
+            sr.timezone_source = "source_column"
+            sr.timezone_confirmed = True
+            tz_from_col = True
+        elif detector.header_timezone:
             sr.timezone = detector.header_timezone
+            sr.timezone_source = "source_column"
+            sr.timezone_confirmed = True
+            tz_from_col = True
 
         for col_idx, cell in enumerate(row):
             tz = detect_timezone_from_text(cell)
             if tz:
                 sr.timezone = tz
+                sr.timezone_source = "source_column"
+                sr.timezone_confirmed = True
+                tz_from_col = True
                 break
+
+        if not tz_from_col:
+            import os
+            fallback_tz = os.environ.get("DEFAULT_TIMEZONE", "Asia/Yekaterinburg")
+            sr.timezone = fallback_tz
+            sr.timezone_source = "default_value"
+            sr.timezone_confirmed = False
+
+    def _parse_duration_cell(self, value: str, unit: str = "auto") -> int | None:
+        if not value or not value.strip():
+            return None
+        cleaned = value.strip().replace("\u00a0", " ")
+        m = re.match(r"^(\d+)\s*мин(?:ут)?$", cleaned, re.IGNORECASE)
+        if m:
+            return int(m.group(1))
+        m = re.match(r"^(\d+)\s*час(?:а|ов)?$", cleaned, re.IGNORECASE)
+        if m:
+            return int(m.group(1)) * 60
+        m = re.match(r"^(\d+):(\d{2}):(\d{2})$", cleaned)
+        if m:
+            return int(m.group(1)) * 60 + int(m.group(2))
+        m = re.match(r"^(\d+):(\d{2})$", cleaned)
+        if m:
+            return int(m.group(1)) * 60 + int(m.group(2))
+        m = re.match(r"^(\d+)[,.](\d+)\s*час(?:а|ов)?$", cleaned, re.IGNORECASE)
+        if m:
+            hours = int(m.group(1))
+            frac_str = m.group(2)
+            minutes = int(float(f"0.{frac_str}") * 60)
+            return hours * 60 + minutes
+
+        try:
+            bare = int(cleaned)
+        except ValueError:
+            return None
+
+        if unit == "hours":
+            return bare * 60
+        elif unit == "minutes":
+            return bare
+        else:
+            _log.warning(
+                "Duration value '%s' was parsed as a bare number (%d) with numeric_duration_unit='auto' — "
+                "interpreting as minutes. Set DURATION_NUMERIC_UNIT=hours in Stage 1 if values represent hours.",
+                value, bare,
+            )
+            return bare
 
     def _row_to_candidate(
         self, sr: StructuredMeetingRow, counter: int, sheet_name: str
@@ -157,9 +236,11 @@ class StructuredExtractor:
             start_date=start_date,
             start_time=start_time,
             timezone=sr.timezone,
-            duration_minutes=None,
-            duration_source="missing",
-            duration_confirmed=False,
+            timezone_source=sr.timezone_source,
+            timezone_confirmed=sr.timezone_confirmed,
+            duration_minutes=sr.duration_minutes,
+            duration_source=sr.duration_source,
+            duration_confirmed=sr.duration_confirmed,
             performer_names=sr.performer_names,
             customer_names=sr.customer_names,
             location=sr.location,

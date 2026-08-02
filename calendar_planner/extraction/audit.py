@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from calendar_planner.domain.models import MeetingCandidate, ExtractedSource
+from calendar_planner.domain.models import ExtractedSource, MeetingCandidate
 
 
 class ExtractionAuditor:

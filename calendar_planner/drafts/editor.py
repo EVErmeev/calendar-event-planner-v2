@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from datetime import timedelta
-
-from calendar_planner.domain.models import FinalEventDraft, DraftField, ResolvedParticipant
-from calendar_planner.domain.enums import DraftFieldOrigin, ParticipantRole
+from calendar_planner.domain.enums import ParticipantRole
+from calendar_planner.domain.models import (
+    DraftField,
+    FinalEventDraft,
+    ResolvedParticipant,
+)
 
 
 class DraftEditor:
@@ -92,12 +94,10 @@ class DraftEditor:
         draft.duration_confirmed = original.duration_confirmed
 
     def _update_field(self, draft: FinalEventDraft, field: DraftField, new_value, field_name: str) -> None:
-        if field.modified_by_user:
-            return
         field.value = new_value
         field.modified_by_user = True
         import datetime as dt
-        field.modified_at = dt.datetime.now().isoformat()
+        field.modified_at = dt.datetime.now(tz=dt.UTC).isoformat()
 
     def _recalculate_end(self, draft: FinalEventDraft) -> None:
         end_date, end_time = draft.compute_end_datetime()
@@ -113,7 +113,7 @@ class DraftEditor:
             "field": field_name,
             "old_value": str(old_value),
             "new_value": str(new_value),
-            "timestamp": dt.datetime.now().isoformat(),
+            "timestamp": dt.datetime.now(tz=dt.UTC).isoformat(),
         })
 
     def get_changes(self) -> list[dict]:

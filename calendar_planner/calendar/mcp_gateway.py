@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+import logging
+import re
 
-from calendar_planner.domain.models import CalendarEvent
+from calendar_planner.app.settings import settings
 from calendar_planner.calendar.datetime_normalizer import parse_iso_datetime
+from calendar_planner.domain.models import CalendarEvent
+
+_logger = logging.getLogger(__name__)
 
 
 class MCPCalendarGateway:
@@ -16,11 +19,18 @@ class MCPCalendarGateway:
         self._create_tool = create_tool
         self._available: bool | None = None
         self._last_response_raw: list[dict] = []
+        self._tz_naive_count: int = 0
+
+    def _health_probe_params(self) -> dict:
+        tool_lower = self._find_tool.lower()
+        if "exchange" in tool_lower or "find_events" in tool_lower:
+            return {"days_back": 1, "days_ahead": 1}
+        return {"start": "2000-01-01", "end": "2000-01-02"}
 
     def is_available(self) -> bool:
         if self._mcp_call is not None:
             try:
-                result = self._mcp_call(self._find_tool, {"start": "2000-01-01", "end": "2000-01-02"})
+                self._mcp_call(self._find_tool, self._health_probe_params())
                 self._available = True
             except Exception:
                 self._available = False
@@ -37,11 +47,23 @@ class MCPCalendarGateway:
             }
         try:
             self._available = self.is_available()
-            return {
+            self._tz_naive_count = 0
+
+            # Do a real calendar read to count events and detect tz issues
+            events = self.find_events("2026-07-26", "2026-09-01")
+            parsed = len(events)
+            naive = sum(1 for e in events if e.start and not e.start.raw_timezone)
+
+            result = {
                 "component": "MCP Calendar",
                 "status": "success" if self._available else "failed",
-                "message": "Connection OK" if self._available else "Cannot reach calendar",
+                "message": f"{parsed} events received, {parsed} parsed" if parsed else "Connection OK",
+                "event_count": parsed,
+                "timezone_warnings": naive,
             }
+            if naive > 0:
+                result["status"] = "success"  # Don't fail, just warn
+            return result
         except Exception as e:
             return {
                 "component": "MCP Calendar",
@@ -51,22 +73,124 @@ class MCPCalendarGateway:
 
     def find_events(self, start_date: str, end_date: str) -> list[CalendarEvent]:
         if not self._mcp_call:
+            _logger.warning("find_events: MCP call function not available — returning empty list")
             return []
 
-        raw_events = self._mcp_call(self._find_tool, {
-            "start": start_date,
-            "end": end_date,
+        from datetime import date as date_type
+        from datetime import datetime as dt_type
+        today = date_type.today()
+        start_dt = dt_type.strptime(start_date, "%Y-%m-%d").date()
+        end_dt = dt_type.strptime(end_date, "%Y-%m-%d").date()
+
+        delta_back = (today - start_dt).days
+        delta_ahead = (end_dt - today).days
+
+        raw_result = self._mcp_call(self._find_tool, {
+            "days_back": max(0, delta_back),
+            "days_ahead": max(1, delta_ahead),
         })
 
-        self._last_response_raw = raw_events if isinstance(raw_events, list) else []
+        # Normalize BEFORE parsing — call exactly once, use result throughout
+        raw_events = self._normalize_response(raw_result)
+        self._last_response_raw = raw_events
+
+        if not raw_events:
+            _logger.warning(
+                "find_events: _normalize_response returned empty list for range %s–%s",
+                start_date, end_date,
+            )
 
         events = []
-        for raw in self._last_response_raw:
+        for raw in raw_events:
             event = self._parse_calendar_event(raw)
             if event:
                 events.append(event)
 
         return events
+
+    def _normalize_response(self, raw_result) -> list[dict]:
+        if isinstance(raw_result, list):
+            filtered = [r for r in raw_result if isinstance(r, dict)]
+            if len(filtered) < len(raw_result):
+                _logger.warning(
+                    "_normalize_response: dropped %d non-dict items from list",
+                    len(raw_result) - len(filtered),
+                )
+            return filtered
+
+        if isinstance(raw_result, dict):
+            if "events" in raw_result:
+                events = raw_result["events"]
+                if isinstance(events, list):
+                    filtered = [r for r in events if isinstance(r, dict)]
+                    if len(filtered) < len(events):
+                        _logger.warning(
+                            "_normalize_response: dropped %d non-dict items from 'events'",
+                            len(events) - len(filtered),
+                        )
+                    return filtered
+                _logger.warning(
+                    "_normalize_response: 'events' key is not a list (type=%s); "
+                    "response keys=%s",
+                    type(events).__name__, list(raw_result.keys()),
+                )
+            if "result" in raw_result:
+                result = raw_result["result"]
+                if isinstance(result, list):
+                    filtered = [r for r in result if isinstance(r, dict)]
+                    if len(filtered) < len(result):
+                        _logger.warning(
+                            "_normalize_response: dropped %d non-dict items from 'result'",
+                            len(result) - len(filtered),
+                        )
+                    return filtered
+                if isinstance(result, dict):
+                    for key in ("events", "items", "data"):
+                        if key in result and isinstance(result[key], list):
+                            filtered = [r for r in result[key] if isinstance(r, dict)]
+                            return filtered
+                _logger.warning(
+                    "_normalize_response: 'result' key has unexpected structure (type=%s); "
+                    "response keys=%s",
+                    type(result).__name__,
+                    list(result.keys()) if isinstance(result, dict) else "N/A",
+                )
+            if any(k in raw_result for k in ("nextPageToken", "hasMore", "pagination")):
+                _logger.warning(
+                    "_normalize_response: response contains pagination placeholders "
+                    "— possible incomplete result"
+                )
+            _logger.warning(
+                "_normalize_response: dict response has no recognized structure; "
+                "keys=%s",
+                list(raw_result.keys()),
+            )
+            return []
+
+        if isinstance(raw_result, str):
+            try:
+                parsed = json.loads(raw_result)
+                return self._normalize_response(parsed)
+            except json.JSONDecodeError:
+                # Try to parse as Exchange MCP text response (Markdown format)
+                text_events = self._parse_text_response(raw_result)
+                if text_events:
+                    _logger.info(
+                        "_normalize_response: parsed %d events from text response",
+                        len(text_events),
+                    )
+                    return text_events
+                _logger.warning(
+                    "_normalize_response: response is a non-JSON string: %s",
+                    raw_result[:200],
+                )
+                return []
+
+        _logger.warning(
+            "_normalize_response: unexpected response type %s; value=%r",
+            type(raw_result).__name__, raw_result,
+        )
+        return []
 
     def create_event(self, payload: dict, dry_run: bool = True) -> dict:
         if not self._mcp_call:
@@ -79,7 +203,17 @@ class MCPCalendarGateway:
                 "payload": payload,
             }
 
-        result = self._mcp_call(self._create_tool, payload)
+        from calendar_planner.calendar.creator import EventCreator
+        mcp_payload = EventCreator.adapt_for_mcp(payload)
+        result = self._mcp_call(self._create_tool, mcp_payload)
+        result_text = str(result)
+        if isinstance(result, str) and "Событие создано" in result_text:
+            return {
+                "status": "created",
+                "message": "Event created",
+                "result": result_text.split("\n")[0],
+                "payload": payload,
+            }
         return {
             "status": "created",
             "message": "Event created",
@@ -89,6 +223,44 @@ class MCPCalendarGateway:
 
     def get_last_raw_response(self) -> list[dict]:
         return self._last_response_raw
+
+    def _parse_text_response(self, text: str) -> list[dict]:
+        events = []
+        current_date = None
+        date_re = re.compile(r"^###\s+(\d{4}-\d{2}-\d{2})")
+        event_re = re.compile(r"^\d+\.\s*\[(\d{2}:\d{2})\s*[-–—]\s*(\d{2}:\d{2})\]\s*(.+)")
+        for line in text.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            dm = date_re.match(line)
+            if dm:
+                current_date = dm.group(1)
+                continue
+            if current_date is None:
+                continue
+            em = event_re.match(line)
+            if em:
+                st = em.group(1)
+                et = em.group(2)
+                rest = em.group(3).strip()
+                url_match = re.search(r"\((https?://[^)]+)\)", rest)
+                online_url = url_match.group(1) if url_match else None
+                if url_match:
+                    rest = rest[:url_match.start()].strip()
+                attendees = [{"email": e} for e in re.findall(r"([\w.+-]+@[\w.-]+)", rest)]
+                for e in re.findall(r"([\w.+-]+@[\w.-]+)", rest):
+                    rest = rest.replace(e, "").strip()
+                subject = re.sub(r"\s*[-–]\s*$", "", rest).strip()
+                events.append({
+                    "id": f"ex-{current_date}-{len(events) + 1}",
+                    "subject": subject[:200],
+                    "start": f"{current_date}T{st}:00",
+                    "end": f"{current_date}T{et}:00",
+                    "online_url": online_url,
+                    "attendees": attendees,
+                })
+        return events
 
     def _parse_calendar_event(self, raw: dict) -> CalendarEvent | None:
         try:
@@ -119,16 +291,20 @@ class MCPCalendarGateway:
             start = None
             if start_str:
                 try:
-                    start = parse_iso_datetime(start_str, start_tz)
+                    fallback_tz = settings.CALENDAR_MISSING_TIMEZONE
+                    if not start_tz:
+                        self._tz_naive_count += 1
+                    start = parse_iso_datetime(start_str, start_tz, fallback_tz=fallback_tz)
                 except Exception:
-                    pass
+                    _logger.debug("Failed to parse start datetime: %s", start_str)
 
             end = None
             if end_str:
                 try:
-                    end = parse_iso_datetime(end_str, end_tz)
+                    fallback_tz = settings.CALENDAR_MISSING_TIMEZONE
+                    end = parse_iso_datetime(end_str, end_tz, fallback_tz=fallback_tz)
                 except Exception:
-                    pass
+                    _logger.debug("Failed to parse end datetime: %s", end_str)
 
             attendees_list = raw.get("attendees", [])
             if isinstance(attendees_list, str):
@@ -150,4 +326,5 @@ class MCPCalendarGateway:
                 raw_data=raw,
             )
         except Exception:
+            _logger.warning("_parse_calendar_event: failed to parse event dict", exc_info=True)
             return None

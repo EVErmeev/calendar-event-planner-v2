@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from calendar_planner.domain.models import CalendarEvent, NormalizedDateTime
+from calendar_planner.domain.models import CalendarEvent
 
 
 class CalendarGateway(Protocol):

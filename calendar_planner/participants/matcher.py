@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from calendar_planner.domain.models import (
-    ResolvedParticipant,
-    ParticipantSide,
     ParticipantRole,
+    ParticipantSide,
+    ResolvedParticipant,
 )
+from calendar_planner.participants.directory_result import DirectorySearchResult
 
 
 class NameMatcher:
@@ -12,14 +13,41 @@ class NameMatcher:
         self.directory = directory_gateway
         self.fuzzy_threshold = fuzzy_threshold
 
+    def _extract_people(self, results) -> tuple[list[dict], str]:
+        if isinstance(results, DirectorySearchResult):
+            status = results.status
+            people = [
+                {
+                    "full_name": p.display_name,
+                    "email": p.email,
+                    "mailbox_type": p.mailbox_type,
+                    "company": p.company,
+                    "department": p.department,
+                    "job_title": p.job_title,
+                }
+                for p in results.people
+            ]
+            return people, status
+        if isinstance(results, list):
+            if not results:
+                return [], "not_found"
+            if len(results) == 1:
+                return list(results), "success"
+            return list(results), "ambiguous"
+        return [], "failed"
+
     def match_performer(self, name: str, default_role: ParticipantRole = ParticipantRole.REQUIRED) -> ResolvedParticipant | None:
         if not self.directory.is_available():
             return None
 
         results = self.directory.search(name)
+        people, status = self._extract_people(results)
 
-        if len(results) == 1:
-            emp = results[0]
+        if status == "ambiguous":
+            return None
+
+        if len(people) == 1:
+            emp = people[0]
             return ResolvedParticipant(
                 full_name=emp["full_name"],
                 email=emp.get("email"),
@@ -30,10 +58,11 @@ class NameMatcher:
                 organization=emp.get("organization", "Первый БИТ"),
             )
 
-        if len(results) == 0:
+        if len(people) == 0:
             results = self.directory.search_by_surname(name) if hasattr(self.directory, "search_by_surname") else []
-            if len(results) == 1:
-                emp = results[0]
+            surname_people, _surname_status = self._extract_people(results)
+            if len(surname_people) == 1:
+                emp = surname_people[0]
                 return ResolvedParticipant(
                     full_name=emp["full_name"],
                     email=emp.get("email"),
@@ -43,22 +72,107 @@ class NameMatcher:
                     match_source="directory_surname",
                     organization=emp.get("organization", "Первый БИТ"),
                 )
+            if len(surname_people) >= 2:
+                scored = [(emp, self._score_match(name, emp)) for emp in surname_people]
+                scored.sort(key=lambda x: x[1], reverse=True)
+                best_match = scored[0]
+                return ResolvedParticipant(
+                    full_name=best_match[0].get("full_name", ""),
+                    email=best_match[0].get("email"),
+                    side=ParticipantSide.PERFORMER,
+                    role=default_role,
+                    source_name=name,
+                    match_source="directory_surname_best",
+                    confidence=best_match[1],
+                    organization=best_match[0].get("organization", "Первый БИТ"),
+                    is_fuzzy_match=True,
+                    fuzzy_score=best_match[1],
+                )
 
-        if len(results) >= 2:
-            best = max(results, key=lambda e: self._score_match(name, e))
-            emp = results[0] if isinstance(results[0], dict) else best
+        if len(people) >= 2:
+            return None
+
+        return None
+
+    def match_performer_with_options(
+        self, name: str, default_role: ParticipantRole = ParticipantRole.REQUIRED
+    ) -> tuple[ResolvedParticipant | None, list[dict]]:
+        if not self.directory.is_available():
+            return None, []
+
+        results = self.directory.search(name)
+        people, status = self._extract_people(results)
+
+        if status == "ambiguous":
+            scored = [(emp, self._score_match(name, emp)) for emp in people]
+            scored.sort(key=lambda x: x[1], reverse=True)
+            options = [
+                {
+                    "full_name": emp["full_name"],
+                    "email": emp.get("email"),
+                    "organization": emp.get("organization", "Первый БИТ"),
+                    "score": score,
+                }
+                for emp, score in scored
+            ]
+            return None, options
+
+        if len(people) == 1:
+            emp = people[0]
             return ResolvedParticipant(
-                full_name=emp.get("full_name", ""),
+                full_name=emp["full_name"],
                 email=emp.get("email"),
                 side=ParticipantSide.PERFORMER,
                 role=default_role,
                 source_name=name,
-                match_source="directory_multiple_best",
-                confidence=0.7,
+                match_source="directory_exact",
                 organization=emp.get("organization", "Первый БИТ"),
-            )
+            ), []
 
-        return None
+        if len(people) == 0:
+            if hasattr(self.directory, "search_by_surname"):
+                surname_results = self.directory.search_by_surname(name)
+            else:
+                surname_results = []
+            surname_people, _surname_status = self._extract_people(surname_results)
+            if len(surname_people) == 1:
+                emp = surname_people[0]
+                return ResolvedParticipant(
+                    full_name=emp["full_name"],
+                    email=emp.get("email"),
+                    side=ParticipantSide.PERFORMER,
+                    role=default_role,
+                    source_name=name,
+                    match_source="directory_surname",
+                    organization=emp.get("organization", "Первый БИТ"),
+                ), []
+            if len(surname_people) >= 2:
+                scored = [(emp, self._score_match(name, emp)) for emp in surname_people]
+                scored.sort(key=lambda x: x[1], reverse=True)
+                options = [
+                    {
+                        "full_name": emp["full_name"],
+                        "email": emp.get("email"),
+                        "organization": emp.get("organization", "Первый БИТ"),
+                        "score": score,
+                    }
+                    for emp, score in scored
+                ]
+                return None, options
+            return None, []
+
+        scored = [(emp, self._score_match(name, emp)) for emp in people]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        options = [
+            {
+                "full_name": emp["full_name"],
+                "email": emp.get("email"),
+                "organization": emp.get("organization", "Первый БИТ"),
+                "score": score,
+            }
+            for emp, score in scored
+        ]
+        return None, options
 
     def match_customer_from_contacts(self, name: str, contact_index) -> ResolvedParticipant | None:
         contacts = contact_index.find_by_name(name)
