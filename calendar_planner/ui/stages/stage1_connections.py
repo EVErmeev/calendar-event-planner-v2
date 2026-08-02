@@ -16,8 +16,18 @@ class Stage1ConnectionsFrame(ttk.Frame):
         import os
         self._saved_endpoint = os.environ.get("EWS_ENDPOINT", "https://mail.1cbit.ru/EWS/Exchange.asmx")
         self._saved_login = os.environ.get("EWS_USERNAME", "")
-        if self._cred_provider and self._cred_provider.has_session_credentials():
-            self._saved_pass_status = "сохранён в сессии"
+        if self._cred_provider:
+            # Try restore from session first, then Credential Manager
+            if self._cred_provider.has_session_credentials():
+                self._saved_pass_status = "сохранён в сессии"
+            else:
+                creds = self._cred_provider.get_credentials()
+                if creds.available and creds.source == "credential_manager":
+                    self._cred_provider.set_session_credentials(creds.username, creds.password)
+                    self._saved_login = creds.username or self._saved_login
+                    self._saved_pass_status = "загружен из Credential Manager"
+                else:
+                    self._saved_pass_status = "не задан"
         else:
             self._saved_pass_status = "не задан"
         self._saved_ready = False
@@ -157,7 +167,8 @@ class Stage1ConnectionsFrame(ttk.Frame):
 
         if password and self._cred_provider:
             self._cred_provider.set_session_credentials(login, password)
-            self._ews_pass_status_var.set("сохранён в сессии")
+            self._cred_provider.save_to_credential_manager(login, password)
+            self._ews_pass_status_var.set("сохранён (сессия + Credential Manager)")
             self._ews_pass_var.set("")
 
         self._log(f"EWS сохранён. Логин: {login}. Пароль — только в памяти.")

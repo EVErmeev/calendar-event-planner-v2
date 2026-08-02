@@ -21,8 +21,8 @@ class MainWindow:
     def __init__(self, root: tk.Tk, container=None):
         self.root = root
         self.root.title("Планировщик календарных событий v2")
-        self.root.geometry("1200x800")
-        self.root.minsize(800, 600)
+        self.root.geometry("1400x850")
+        self.root.minsize(1000, 600)
 
         self.container = container
         self.controller = StageController()
@@ -146,7 +146,9 @@ class MainWindow:
         self._bottom_primary_btn.pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Запустить анализ", command=self._run_analysis).pack(side=tk.LEFT, padx=10)
         ttk.Button(bottom, text="Подключения", command=self._show_stage_1).pack(side=tk.LEFT, padx=2)
-        ttk.Button(bottom, text="Сохранить сессию", command=self._save_session).pack(side=tk.RIGHT, padx=2)
+
+        self._bottom_session_btn = ttk.Button(bottom, text="Сохранить сессию", command=self._save_session)
+        self._bottom_session_btn.pack(side=tk.RIGHT, padx=2)
         ttk.Button(bottom, text="Копировать", command=self._copy_results).pack(side=tk.RIGHT, padx=2)
 
     def _select_file(self) -> None:
