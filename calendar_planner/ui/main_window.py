@@ -939,7 +939,10 @@ class MainWindow:
                     if isinstance(r, dict):
                         event_id = r.get("id", "") or r.get("event_id", "")
                     elif isinstance(r, str):
-                        event_id = r[:50]
+                        if "Событие создано" in r:
+                            event_id = "OK"
+                        else:
+                            event_id = ""
                 event_url = result.get("url", "")
                 if not event_url:
                     r = result.get("result", {})

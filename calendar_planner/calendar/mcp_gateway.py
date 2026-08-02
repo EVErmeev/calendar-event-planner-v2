@@ -203,6 +203,14 @@ class MCPCalendarGateway:
             }
 
         result = self._mcp_call(self._create_tool, payload)
+        result_text = str(result)
+        if isinstance(result, str) and "Событие создано" in result_text:
+            return {
+                "status": "created",
+                "message": "Event created",
+                "result": result_text.split("\n")[0],
+                "payload": payload,
+            }
         return {
             "status": "created",
             "message": "Event created",
