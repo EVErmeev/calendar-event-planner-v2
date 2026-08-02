@@ -659,12 +659,12 @@ class MainWindow:
         }
 
         text = btn_texts.get((stage, status))
-        if text and (stage != 0 or status in ("success", "success_with_warnings", "failed")):
-            self._bottom_primary_btn.config(text=text, state="normal")
-        elif stage == 0:
-            self._bottom_primary_btn.config(state="disabled")
+        if stage == 0:
+            self._bottom_primary_btn.pack_forget()
         else:
-            self._bottom_primary_btn.config(text="Далее →", state="normal")
+            text = btn_texts.get((stage, status), "Далее →")
+            self._bottom_primary_btn.pack(side=tk.LEFT, padx=2)
+            self._bottom_primary_btn.config(text=text, state="normal")
 
     def _invalidate_stages_5_6(self) -> None:
         """Set stage 5 and stage 6 to stale/not_started, clear drafts."""
