@@ -147,7 +147,7 @@ class Stage1ConnectionsFrame(ttk.Frame):
         except Exception as e:
             self._log(f"Ошибка: {e}")
 
-    def _save_ews(self):
+def _save_ews(self):
         endpoint = self._ews_endpoint_var.get().strip()
         login = self._ews_login_var.get().strip()
         password = self._ews_pass_var.get().strip()
@@ -155,34 +155,19 @@ class Stage1ConnectionsFrame(ttk.Frame):
         if self.container:
             self.container.configure_ews(endpoint, login, password if password else None)
 
+        if password and self._cred_provider:
+            self._cred_provider.set_session_credentials(login, password)
+            self._ews_pass_status_var.set("сохранён в сессии")
+            self._ews_pass_var.set("")
+
+        # Save to .env with password
         from pathlib import Path
         env_file = Path(__file__).parent.parent.parent.parent / ".env"
         if env_file.exists():
             lines = env_file.read_text(encoding="utf-8").split("\n")
             updates = {"EWS_ENDPOINT": endpoint, "EWS_USERNAME": login}
-            new = []; seen = set()
-            for line in lines:
-                k = line.split("=")[0].strip() if "=" in line else ""
-                if k in updates:
-                    new.append(f"{k}={updates[k]}"); seen.add(k); del updates[k]
-                elif k == "EWS_PASSWORD": continue
-                else: new.append(line)
-            for k, v in updates.items():
-                if v and k not in seen: new.append(f"{k}={v}")
-            env_file.write_text("\n".join(new), encoding="utf-8")
-
-        if password and self._cred_provider:
-            self._cred_provider.set_session_credentials(login, password)
-            self._cred_provider.save_to_credential_manager(login, password)
-            self._ews_pass_status_var.set("сохранён (сессия + Credential Manager)")
-            self._ews_pass_var.set("")
-
-        # Also save to .env for persistence between runs
-        from pathlib import Path
-        env_file = Path(__file__).parent.parent.parent.parent / ".env"
-        if env_file.exists() and password and login:
-            lines = env_file.read_text(encoding="utf-8").split("\n")
-            updates = {"EWS_ENDPOINT": endpoint, "EWS_USERNAME": login, "EWS_PASSWORD": password}
+            if password:
+                updates["EWS_PASSWORD"] = password
             new = []; seen = set()
             for line in lines:
                 k = line.split("=")[0].strip() if "=" in line else ""
@@ -193,7 +178,7 @@ class Stage1ConnectionsFrame(ttk.Frame):
                 if v and k not in seen: new.append(f"{k}={v}")
             env_file.write_text("\n".join(new), encoding="utf-8")
 
-        self._log(f"EWS сохранён. Логин: {login}. Пароль — только в памяти.")
+        self._log(f"EWS сохранён. Логин: {login}. Пароль — {'сохранён' if password else 'не указан'}.")
 
     def _clear_ews(self):
         self._ews_login_var.set("")
