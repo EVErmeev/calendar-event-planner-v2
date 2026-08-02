@@ -140,15 +140,14 @@ class MainWindow:
         bottom = ttk.Frame(self.root, padding=5)
         bottom.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
 
-        self._bottom_back_btn = ttk.Button(bottom, text="← Назад", command=self._prev_stage)
-        self._bottom_back_btn.pack(side=tk.LEFT, padx=2)
-        self._bottom_primary_btn = ttk.Button(bottom, text="Далее →", command=self._primary_action)
-        self._bottom_primary_btn.pack(side=tk.LEFT, padx=2)
-        ttk.Button(bottom, text="Запустить анализ", command=self._run_analysis).pack(side=tk.LEFT, padx=10)
-        ttk.Button(bottom, text="Подключения", command=self._show_stage_1).pack(side=tk.LEFT, padx=2)
+        self._bottom_left_btns = ttk.Frame(bottom)
+        self._bottom_left_btns.pack(side=tk.LEFT)
 
-        self._bottom_session_btn = ttk.Button(bottom, text="Сохранить сессию", command=self._save_session)
-        self._bottom_session_btn.pack(side=tk.RIGHT, padx=2)
+        self._bottom_primary_btn = ttk.Button(bottom, text="Проверить подключения", command=self._primary_action)
+        self._bottom_primary_btn.pack(side=tk.LEFT, padx=(20, 2))
+        ttk.Button(bottom, text="Запустить анализ", command=self._run_analysis).pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(bottom, text="Сохранить сессию", command=self._save_session).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bottom, text="Копировать", command=self._copy_results).pack(side=tk.RIGHT, padx=2)
 
     def _select_file(self) -> None:
@@ -600,6 +599,15 @@ class MainWindow:
         stage = self.controller.current_stage
         status = self.controller.get_stage_status(stage)
 
+        if stage == 0 and status == "not_started":
+            self._check_connections()
+            self._update_stage_indicators()
+            self._update_bottom_buttons()
+            self._show_stage_content()
+            return
+        if stage == 0 and status in ("success", "success_with_warnings"):
+            self._run_analysis()
+            return
         if stage == 1 and status in ("success", "success_with_warnings"):
             self._run_stage_3_async()
         elif stage == 2 and status in ("success", "success_with_warnings"):
@@ -631,6 +639,9 @@ class MainWindow:
         status = self.controller.get_stage_status(stage)
 
         btn_texts = {
+            (0, "not_started"): "Проверить подключения",
+            (0, "failed"): "Проверить подключения",
+            (0, "success"): "Запустить анализ",
             (1, "success"): "Сравнить с календарём →",
             (1, "success_with_warnings"): "Сравнить с календарём →",
             (2, "success"): "Определить участников →",
@@ -643,8 +654,11 @@ class MainWindow:
             (5, "success_with_warnings"): "Завершить",
         }
 
-        text = btn_texts.get((stage, status), "Далее →")
-        self._bottom_primary_btn.config(text=text)
+        text = btn_texts.get((stage, status))
+        if text:
+            self._bottom_primary_btn.config(text=text, state="normal")
+        else:
+            self._bottom_primary_btn.config(text="Далее →", state="normal")
 
     def _invalidate_stages_5_6(self) -> None:
         """Set stage 5 and stage 6 to stale/not_started, clear drafts."""
