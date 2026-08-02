@@ -96,17 +96,29 @@ class AppContainer:
         if self._directory_gateway is not None:
             return self._directory_gateway
 
-        if self.settings.EWS_ENDPOINT and self.settings.EWS_USERNAME:
+        # Test env always uses fixture regardless of EWS settings
+        if self._is_test_env:
+            from calendar_planner.participants.directory_gateway import FixtureDirectoryGateway
+            self._init_warnings.append("Using FixtureDirectoryGateway (test env)")
+            return FixtureDirectoryGateway()
+
+        if self.settings.EWS_ENDPOINT:
+            from calendar_planner.app.credential_provider import CredentialProvider
             from calendar_planner.participants.ews_directory_gateway import (
                 EWSDirectoryGateway,
             )
+            cred_provider = CredentialProvider()
+
+            if self.settings.EWS_PASSWORD:
+                cred_provider.set_session_credentials(
+                    self.settings.EWS_USERNAME, self.settings.EWS_PASSWORD
+                )
+
+            creds = cred_provider.get_credentials()
             self._directory_gateway = EWSDirectoryGateway(
                 endpoint=self.settings.EWS_ENDPOINT,
-                username=self.settings.EWS_USERNAME,
-                password=self.settings.EWS_PASSWORD,
-            )
-            self._init_warnings.append(
-                f"Using EWSDirectoryGateway (EWS endpoint: {self.settings.EWS_ENDPOINT})"
+                username=creds.username if creds.available else (self.settings.EWS_USERNAME or ""),
+                password=creds.password if creds.available else "",
             )
             return self._directory_gateway
 
@@ -117,15 +129,13 @@ class AppContainer:
             self._init_warnings.append("Using FixtureDirectoryGateway (test env)")
             return FixtureDirectoryGateway()
 
-        from calendar_planner.participants.directory_gateway import MCPDirectoryGateway
-        self._init_warnings.append(
-            "No EWS directory configured — falling back to MCP directory gateway"
+        # EWS not configured — create gateway that reports unavailable
+        from calendar_planner.participants.ews_directory_gateway import (
+            EWSDirectoryGateway,
         )
-        mcp_call = self._mcp_transport.call_tool if self._mcp_transport else None
-        return MCPDirectoryGateway(
-            mcp_call_function=mcp_call,
-            search_tool=self.settings.MCP_DIRECTORY_SEARCH_TOOL,
-        )
+        self._directory_gateway = EWSDirectoryGateway(endpoint="", username="", password="")
+        self._init_warnings.append("EWS directory not configured")
+        return self._directory_gateway
 
     def check_all_connections(self) -> dict:
         """Check MCP, calendar, directory, source accessibility.
@@ -141,6 +151,15 @@ class AppContainer:
             results.append(cal_result)
             if cal_result.get("status") == "failed":
                 required_ok = False
+
+            # Timezone warning
+            tz_warnings = cal_result.get("timezone_warnings", 0)
+            if tz_warnings > 0:
+                results.append({
+                    "component": "Calendar Timezone",
+                    "status": "warning",
+                    "message": f"Часть событий ({tz_warnings}) без timezone — использована нормализация UTC.",
+                })
         else:
             results.append({
                 "component": "MCP Calendar",
@@ -155,15 +174,71 @@ class AppContainer:
             directory_gw = None
 
         if directory_gw is not None:
-            dir_available = directory_gw.is_available()
-            dir_result = {
-                "component": "Directory",
-                "status": "success" if dir_available else "failed",
-                "message": f"Directory ({directory_gw.get_capability()}) available" if dir_available else "Directory service unavailable",
-            }
-            results.append(dir_result)
-            if not dir_available:
-                required_ok = False
+            dir_cap = directory_gw.get_capability()
+            if "ews" in dir_cap.lower() and directory_gw.is_available():
+                # Probe real EWS ResolveNames
+                try:
+                    probe_result = directory_gw.search("calendar-planner-health-check")
+                    probe_status = probe_result.status if isinstance(probe_result, object) and hasattr(probe_result, "status") else "ok"
+                    if probe_status in ("success", "ambiguous", "not_found"):
+                        results.append({
+                            "component": "EWS Directory",
+                            "status": "success",
+                            "message": f"EWS ResolveNames available ({probe_status})",
+                        })
+                        results.append({
+                            "component": "Authentication",
+                            "status": "success",
+                            "message": "NTLM session credentials accepted",
+                        })
+                    elif probe_status == "auth_failed":
+                        results.append({
+                            "component": "EWS Directory",
+                            "status": "failed",
+                            "message": "Ошибка авторизации EWS. Проверьте логин/пароль.",
+                            "error": "AUTH_FAILED",
+                        })
+                        required_ok = False
+                    elif probe_status == "forbidden":
+                        results.append({
+                            "component": "EWS Directory",
+                            "status": "failed",
+                            "message": "EWS доступ запрещён (403).",
+                            "error": "FORBIDDEN",
+                        })
+                        required_ok = False
+                    elif probe_status == "timeout":
+                        results.append({
+                            "component": "EWS Directory",
+                            "status": "failed",
+                            "message": "EWS таймаут.",
+                            "error": "TIMEOUT",
+                        })
+                        required_ok = False
+                    else:
+                        results.append({
+                            "component": "EWS Directory",
+                            "status": "failed",
+                            "message": f"EWS error: {probe_status}",
+                        })
+                        required_ok = False
+                except Exception as exc:
+                    results.append({
+                        "component": "EWS Directory",
+                        "status": "failed",
+                        "message": f"EWS probe error: {exc}",
+                    })
+                    required_ok = False
+            else:
+                dir_available = directory_gw.is_available()
+                dir_result = {
+                    "component": "Directory",
+                    "status": "success" if dir_available else "warning",
+                    "message": "EWS directory not configured" if not dir_available else f"Directory ({dir_cap}) available",
+                }
+                results.append(dir_result)
+                if not dir_available:
+                    required_ok = False
         else:
             results.append({
                 "component": "Directory",

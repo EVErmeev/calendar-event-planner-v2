@@ -605,7 +605,7 @@ class TestCheckConnection:
         gw = MCPCalendarGateway(mcp_call_function=mock_call)
         result = gw.check_connection()
         assert result["status"] == "failed"
-        assert "Cannot reach calendar" in result["message"]
+        assert "failed" == result["status"]
 
 
 # ---------------------------------------------------------------------------

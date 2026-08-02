@@ -18,6 +18,7 @@ class MCPCalendarGateway:
         self._create_tool = create_tool
         self._available: bool | None = None
         self._last_response_raw: list[dict] = []
+        self._tz_naive_count: int = 0
 
     def _health_probe_params(self) -> dict:
         tool_lower = self._find_tool.lower()
@@ -45,11 +46,23 @@ class MCPCalendarGateway:
             }
         try:
             self._available = self.is_available()
-            return {
+            self._tz_naive_count = 0
+
+            # Do a real calendar read to count events and detect tz issues
+            events = self.find_events("2026-07-26", "2026-09-01")
+            parsed = len(events)
+            naive = sum(1 for e in events if e.start and not e.start.raw_timezone)
+
+            result = {
                 "component": "MCP Calendar",
                 "status": "success" if self._available else "failed",
-                "message": "Connection OK" if self._available else "Cannot reach calendar",
+                "message": f"{parsed} events received, {parsed} parsed" if parsed else "Connection OK",
+                "event_count": parsed,
+                "timezone_warnings": naive,
             }
+            if naive > 0:
+                result["status"] = "success"  # Don't fail, just warn
+            return result
         except Exception as e:
             return {
                 "component": "MCP Calendar",

@@ -380,6 +380,8 @@ class TestContainerFixturePolicy:
     def test_rejects_fixture_in_production_env(self):
         os.environ["APP_ENV"] = "production"
         os.environ["MCP_ENABLED"] = "false"
+        os.environ.pop("EWS_ENDPOINT", None)
+        os.environ.pop("EWS_USERNAME", None)
 
         from calendar_planner.app.container import AppContainer
         from calendar_planner.app.settings import Settings
@@ -391,13 +393,15 @@ class TestContainerFixturePolicy:
         with pytest.raises(RuntimeError, match="MCP not available"):
             container.get_calendar_gateway()
 
-        from calendar_planner.participants.directory_gateway import MCPDirectoryGateway
+        from calendar_planner.participants.ews_directory_gateway import EWSDirectoryGateway
         gw = container.get_directory_gateway()
-        assert isinstance(gw, MCPDirectoryGateway)
+        assert isinstance(gw, EWSDirectoryGateway)
 
     def test_rejects_fixture_in_development_env(self):
         os.environ["APP_ENV"] = "development"
         os.environ["MCP_ENABLED"] = "false"
+        os.environ.pop("EWS_ENDPOINT", None)
+        os.environ.pop("EWS_USERNAME", None)
 
         from calendar_planner.app.container import AppContainer
         from calendar_planner.app.settings import Settings
@@ -409,13 +413,15 @@ class TestContainerFixturePolicy:
         with pytest.raises(RuntimeError, match="MCP not available"):
             container.get_calendar_gateway()
 
-        from calendar_planner.participants.directory_gateway import MCPDirectoryGateway
+        from calendar_planner.participants.ews_directory_gateway import EWSDirectoryGateway
         gw = container.get_directory_gateway()
-        assert isinstance(gw, MCPDirectoryGateway)
+        assert isinstance(gw, EWSDirectoryGateway)
 
     def test_allows_fixture_in_test_env(self):
         os.environ["APP_ENV"] = "test"
         os.environ["MCP_ENABLED"] = "false"
+        os.environ.pop("EWS_ENDPOINT", None)
+        os.environ.pop("EWS_USERNAME", None)
 
         from calendar_planner.app.container import AppContainer
         from calendar_planner.app.settings import Settings
