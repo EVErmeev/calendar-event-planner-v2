@@ -7,7 +7,10 @@ from tkinter import filedialog, messagebox, ttk
 from calendar_planner.domain.enums import StageStatus
 from calendar_planner.session.storage import SessionStorage
 from calendar_planner.ui.controllers import StageController
-from calendar_planner.ui.keyboard_shortcuts import bind_shortcuts
+from calendar_planner.ui.keyboard_shortcuts import (
+    bind_shortcuts,
+    install_global_shortcuts,
+)
 
 
 def _format_errors(errors: list) -> str:
@@ -35,6 +38,8 @@ class MainWindow:
         self._operation_stage = None
 
         self._build_ui()
+
+        install_global_shortcuts(self.root)
 
         if self.container is not None:
             self._check_connections()
@@ -225,7 +230,7 @@ class MainWindow:
 
                 from calendar_planner.extraction.structured import StructuredExtractor
                 self.root.after(0, lambda: self._show_progress("Поиск встреч...", 30))
-                extractor = StructuredExtractor(date_policy=settings.MEETING_DATE_POLICY)
+                extractor = StructuredExtractor(date_policy=settings.MEETING_DATE_POLICY, numeric_duration_unit=settings.DURATION_NUMERIC_UNIT)
                 candidates = extractor.extract(extracted)
                 if self._cancel_requested:
                     self.root.after(0, lambda: self.info_text.insert(tk.END, "\n[ОТМЕНЕНО]\n"))

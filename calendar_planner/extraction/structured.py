@@ -24,8 +24,9 @@ from calendar_planner.source.schema_detector import (
 
 
 class StructuredExtractor:
-    def __init__(self, date_policy: MeetingDatePolicy = MeetingDatePolicy.AGREED_ONLY):
+    def __init__(self, date_policy: MeetingDatePolicy = MeetingDatePolicy.AGREED_ONLY, numeric_duration_unit: str = "auto"):
         self.date_policy = date_policy
+        self.numeric_duration_unit = numeric_duration_unit
         self.skipped_rows: list[dict] = []
 
     def extract(self, source: ExtractedSource) -> dict[str, list[MeetingCandidate]]:
@@ -108,7 +109,7 @@ class StructuredExtractor:
 
         if detector.duration_col is not None and detector.duration_col < len(row):
             dur_cell = row[detector.duration_col]
-            parsed = self._parse_duration_cell(dur_cell)
+            parsed = self._parse_duration_cell(dur_cell, unit=self.numeric_duration_unit)
             sr.duration_minutes = parsed
             sr.duration_source = "source_column"
             sr.duration_confirmed = parsed is not None
@@ -150,8 +151,7 @@ class StructuredExtractor:
             sr.timezone_source = "default_value"
             sr.timezone_confirmed = False
 
-    @staticmethod
-    def _parse_duration_cell(value: str) -> int | None:
+    def _parse_duration_cell(self, value: str, unit: str = "auto") -> int | None:
         if not value or not value.strip():
             return None
         cleaned = value.strip().replace("\u00a0", " ")
@@ -179,16 +179,14 @@ class StructuredExtractor:
         except ValueError:
             return None
 
-        from calendar_planner.app.settings import settings
-        unit = settings.DURATION_NUMERIC_UNIT
         if unit == "hours":
             return bare * 60
         elif unit == "minutes":
             return bare
         else:
             _log.warning(
-                "Duration value '%s' was parsed as a bare number (%d) with DURATION_NUMERIC_UNIT='auto' — "
-                "interpreted as minutes, verify manually.",
+                "Duration value '%s' was parsed as a bare number (%d) with numeric_duration_unit='auto' — "
+                "interpreting as minutes. Set DURATION_NUMERIC_UNIT=hours in Stage 1 if values represent hours.",
                 value, bare,
             )
             return bare

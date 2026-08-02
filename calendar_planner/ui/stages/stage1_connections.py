@@ -374,6 +374,51 @@ class Stage1ConnectionsFrame(ttk.Frame):
         if self._on_setting_changed:
             self._on_setting_changed()
 
+        # Numeric duration unit
+        dur_frame = ttk.LabelFrame(self._scrollable, text="Единица числовой длительности", padding=5)
+        dur_frame.pack(fill=tk.X, pady=5)
+        dur_row = ttk.Frame(dur_frame)
+        dur_row.pack(fill=tk.X, pady=2)
+        ttk.Label(dur_row, text="Единица:", width=15).pack(side=tk.LEFT)
+        dur_values = ["Часы", "Минуты", "Авто"]
+        dur_internal = {"Часы": "hours", "Минуты": "minutes", "Авто": "auto"}
+        current_dur = os.environ.get("DURATION_NUMERIC_UNIT", "auto")
+        current_dur_display = "Авто"
+        for display, internal in dur_internal.items():
+            if internal == current_dur:
+                current_dur_display = display
+                break
+        self._dur_var = tk.StringVar(value=current_dur_display)
+        self._dur_combo = ttk.Combobox(dur_row, textvariable=self._dur_var, values=dur_values, state="readonly", width=30)
+        self._dur_combo.pack(side=tk.LEFT, padx=5)
+        self._dur_combo.bind("<<ComboboxSelected>>", self._on_duration_unit_changed)
+
+    def _on_duration_unit_changed(self, event=None):
+        dur_internal = {"Часы": "hours", "Минуты": "minutes", "Авто": "auto"}
+        value = dur_internal.get(self._dur_var.get(), "auto")
+        os.environ["DURATION_NUMERIC_UNIT"] = value
+        from calendar_planner.app.settings import settings
+        settings.DURATION_NUMERIC_UNIT = value
+        env_file = Path(__file__).parent.parent.parent.parent / ".env"
+        if env_file.exists():
+            lines = env_file.read_text(encoding="utf-8").split("\n")
+            out_lines = []
+            replaced = False
+            for line in lines:
+                key = line.split("=")[0].strip() if "=" in line else ""
+                if key == "DURATION_NUMERIC_UNIT":
+                    out_lines.append(f"DURATION_NUMERIC_UNIT={value}")
+                    replaced = True
+                else:
+                    out_lines.append(line)
+            if not replaced:
+                out_lines.append(f"DURATION_NUMERIC_UNIT={value}")
+            env_file.write_text("\n".join(out_lines), encoding="utf-8")
+        else:
+            with open(env_file, "w", encoding="utf-8") as f:
+                f.write(f"DURATION_NUMERIC_UNIT={value}\n")
+        self._log(f"Единица числовой длительности: {self._dur_var.get()}")
+
     def _check_directory(self):
         if self.container is None: return
         ep = self._ews_endpoint_var.get().strip()
