@@ -242,8 +242,8 @@ class TestValidation:
 
         payload = {
             "subject": "Test",
-            "start": {"dateTime": "2026-08-04T12:00:00", "timeZone": "Asia/Yekaterinburg"},
-            "end": {"dateTime": "2026-08-04T13:00:00", "timeZone": "Asia/Yekaterinburg"},
+            "start": "2026-08-04 12:00",
+            "end": "2026-08-04 13:00",
         }
         errors = validate_payload(payload)
         assert len(errors) == 0
@@ -1787,8 +1787,8 @@ class TestPayloadAndCreation:
         payload = creator.build_payload(draft)
         assert "start" in payload
         assert "end" in payload
-        assert payload["start"]["dateTime"] is not None
-        assert payload["end"]["dateTime"] is not None
+        assert payload["start"] is not None
+        assert payload["end"] is not None
 
     def test_cannot_create_without_confirmed_duration(self):
         from calendar_planner.calendar.creator import EventCreator
