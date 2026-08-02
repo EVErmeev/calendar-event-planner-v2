@@ -31,6 +31,19 @@ def subject_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a_norm, b_norm).ratio()
 
 
+def _generate_rejection_reason(
+    time_diff: int, subject_sim: float, tolerance: int, subject_threshold: float
+) -> str:
+    reasons: list[str] = []
+    if time_diff > tolerance:
+        reasons.append(f"разница по времени {time_diff} мин превышает допуск {tolerance} мин")
+    if subject_sim < subject_threshold:
+        reasons.append(
+            f"сходство темы {subject_sim:.0%} ниже порога {subject_threshold:.0%}"
+        )
+    return "; ".join(reasons) if reasons else "неизвестная причина"
+
+
 class CalendarMatcher:
     def __init__(
         self,
@@ -92,6 +105,7 @@ class CalendarMatcher:
         calendar_events: list[CalendarEvent],
     ) -> CalendarMatch | None:
         best_match: tuple[CalendarEvent, float, MatchDecision, int | None, float] | None = None
+        best_any: tuple[CalendarEvent, float, MatchDecision, int | None, float] | None = None
 
         for event in calendar_events:
             if event.start is None:
@@ -102,6 +116,10 @@ class CalendarMatcher:
             ) / 60
 
             sub_sim = subject_similarity(candidate.subject, event.subject)
+            weighted_score = self.compute_weighted_score(candidate, event)
+
+            if best_any is None or weighted_score > best_any[1]:
+                best_any = (event, weighted_score, MatchDecision.NEW, int(time_diff), sub_sim)
 
             if time_diff <= self.tolerance_minutes and sub_sim >= self.subject_threshold:
                 return CalendarMatch(
@@ -112,8 +130,6 @@ class CalendarMatcher:
                     time_diff_minutes=int(time_diff),
                     subject_similarity=sub_sim,
                 )
-
-            weighted_score = self.compute_weighted_score(candidate, event)
 
             if time_diff <= self.tolerance_minutes and sub_sim < self.subject_threshold:
                 match = (event, weighted_score, MatchDecision.POSSIBLE_DUPLICATE, int(time_diff), sub_sim)
@@ -136,6 +152,21 @@ class CalendarMatcher:
                 subject_similarity=sim,
             )
 
+        best_rejected = None
+        if best_any is not None:
+            evt, _score, _decision, diff, sim = best_any
+            best_rejected = {
+                "subject": evt.subject[:120],
+                "time_diff_minutes": int(diff) if diff is not None else 0,
+                "subject_similarity": sim,
+                "reasoning": _generate_rejection_reason(
+                    int(diff) if diff is not None else 0,
+                    sim,
+                    self.tolerance_minutes,
+                    self.subject_threshold,
+                ),
+            }
+
         return CalendarMatch(
             candidate_id=candidate.candidate_id,
             calendar_event=None,  # type: ignore
@@ -144,6 +175,7 @@ class CalendarMatcher:
             time_diff_minutes=None,
             subject_similarity=0.0,
             details={"message": "No matching events found"},
+            best_rejected=best_rejected,
         )
 
     def compute_weighted_score(

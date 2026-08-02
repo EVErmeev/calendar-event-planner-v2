@@ -14,12 +14,13 @@ from calendar_planner.drafts.hash import compute_draft_hash
 
 
 class EventEditorFrame(ttk.Frame):
-    def __init__(self, parent, draft: FinalEventDraft, on_recheck=None, **kwargs):
+    def __init__(self, parent, draft: FinalEventDraft, on_recheck=None, on_draft_updated=None, **kwargs):
         super().__init__(parent, **kwargs)
         self.draft = draft
         self._original_draft = FinalEventDraft.from_dict(draft.to_dict())
         self.editor = DraftEditor()
         self.on_recheck = on_recheck
+        self.on_draft_updated = on_draft_updated
 
         self._build_ui()
         self._populate_fields()
@@ -102,6 +103,8 @@ class EventEditorFrame(ttk.Frame):
         self.tz_entry = ttk.Entry(row_frame, textvariable=self.tz_var, width=25)
         self.tz_entry.pack(side=tk.LEFT, padx=(0, 10))
         self.tz_entry.bind("<KeyRelease>", lambda e: self._on_field_changed("timezone"))
+        self.tz_source_label = ttk.Label(row_frame, text="", font=("", 7), foreground="gray")
+        self.tz_source_label.pack(side=tk.LEFT)
 
         self.all_day_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(row_frame, text="Весь день", variable=self.all_day_var).pack(side=tk.LEFT)
@@ -224,6 +227,16 @@ class EventEditorFrame(ttk.Frame):
         self.date_var.set(self.draft.start_date.value or "")
         self.time_var.set(self.draft.start_time.value or "")
         self.tz_var.set(self.draft.timezone.value or "")
+
+        tz_source = ""
+        if self.draft.timezone.evidence:
+            src = self.draft.timezone.evidence[0].get("source", "")
+            if src == "source_column":
+                tz_source = "Источник: заголовок колонки"
+            elif src == "default_value":
+                tz_source = "Источник: значение по умолчанию"
+        self.tz_source_label.config(text=tz_source)
+
         self.location_var.set(self.draft.location.value or "")
         self.url_var.set(self.draft.online_meeting_url.value or "")
 
@@ -266,6 +279,8 @@ class EventEditorFrame(ttk.Frame):
         self._update_end_datetime()
         self._mark_stale()
         self._recalculate_readiness()
+        if self.on_draft_updated:
+            self.on_draft_updated(self.draft)
 
     def _custom_duration(self) -> None:
         try:
@@ -305,6 +320,8 @@ class EventEditorFrame(ttk.Frame):
         self._update_end_datetime()
         self._mark_stale()
         self._recalculate_readiness()
+        if self.on_draft_updated:
+            self.on_draft_updated(self.draft)
 
     def _on_description_changed(self) -> None:
         pass
@@ -473,12 +490,16 @@ class EventEditorFrame(ttk.Frame):
             foreground="blue",
         )
         self._update_ready_status()
+        if self.on_draft_updated:
+            self.on_draft_updated(self.draft)
 
     def _save_all(self) -> None:
         self._save_description()
         self.draft.match_status = "stale"
         self._recalculate_readiness()
         self.status_label.config(text="Изменения сохранены. Требуется проверка дубля.", foreground="orange")
+        if self.on_draft_updated:
+            self.on_draft_updated(self.draft)
 
     def get_draft(self) -> FinalEventDraft:
         return self.draft

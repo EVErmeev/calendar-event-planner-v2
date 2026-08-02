@@ -17,6 +17,7 @@ class Stage6CreationFrame(ttk.Frame):
         self.on_real_create = on_real_create
         self._editor_frame: EventEditorFrame | None = None
         self._draft_vars: dict[str, tk.BooleanVar] = {}
+        self._draft_widgets: dict[str, dict] = {}
         self._current_draft: FinalEventDraft | None = None
         self._results_table: ttk.LabelFrame | None = None
         self._results_tree: ttk.Treeview | None = None
@@ -97,15 +98,51 @@ class Stage6CreationFrame(ttk.Frame):
         btn.pack(anchor=tk.W)
 
         date_info = f"{draft.start_date.value or '?'} {draft.start_time.value or ''}"
-        ttk.Label(info_frame, text=date_info, font=("", 7)).pack(anchor=tk.W)
+        date_lbl = ttk.Label(info_frame, text=date_info, font=("", 7))
+        date_lbl.pack(anchor=tk.W)
 
         preflight = preflight_validate(draft)
         draft.is_ready = preflight.ready
         if preflight.ready:
-            ttk.Label(info_frame, text="Готово", foreground="green", font=("", 7)).pack(anchor=tk.W)
+            status_lbl = ttk.Label(info_frame, text="Готово", foreground="green", font=("", 7))
+            status_lbl.pack(anchor=tk.W)
         else:
             errors_short = ", ".join(e["message_ru"][:40] for e in preflight.blocking_errors[:2])
-            ttk.Label(info_frame, text=errors_short or "Не готово", foreground="red", font=("", 7), wraplength=300).pack(anchor=tk.W)
+            status_lbl = ttk.Label(info_frame, text=errors_short or "Не готово", foreground="red", font=("", 7), wraplength=300)
+            status_lbl.pack(anchor=tk.W)
+
+        self._draft_widgets[draft.draft_id] = {
+            "subject_btn": btn,
+            "date_lbl": date_lbl,
+            "status_lbl": status_lbl,
+        }
+
+    def refresh_card_row(self, draft_or_id: FinalEventDraft | str) -> None:
+        if isinstance(draft_or_id, FinalEventDraft):
+            draft = draft_or_id
+            draft_id = draft.draft_id
+        else:
+            draft_id = draft_or_id
+            draft = next((d for d in self.drafts if d.draft_id == draft_id), None)
+
+        if draft is None or draft_id not in self._draft_widgets:
+            return
+
+        w = self._draft_widgets[draft_id]
+
+        subject = draft.subject.value or "Без темы"
+        w["subject_btn"].configure(text=f"[{draft_id}] {subject[:60]}")
+
+        date_info = f"{draft.start_date.value or '?'} {draft.start_time.value or ''}"
+        w["date_lbl"].configure(text=date_info)
+
+        preflight = preflight_validate(draft)
+        draft.is_ready = preflight.ready
+        if preflight.ready:
+            w["status_lbl"].configure(text="Готово", foreground="green")
+        else:
+            errors_short = ", ".join(e["message_ru"][:40] for e in preflight.blocking_errors[:2])
+            w["status_lbl"].configure(text=errors_short or "Не готово", foreground="red")
 
     def _on_draft_click(self, draft: FinalEventDraft) -> None:
         self._current_draft = draft
@@ -116,6 +153,7 @@ class Stage6CreationFrame(ttk.Frame):
             self._right_frame,
             draft,
             on_recheck=self._on_recheck_callback,
+            on_draft_updated=self.refresh_card_row,
         )
         self._editor_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -145,6 +183,7 @@ class Stage6CreationFrame(ttk.Frame):
             widget.destroy()
         self._editor_frame = None
         self._draft_vars = {}
+        self._draft_widgets = {}
         self._current_draft = None
         self._results_table = None
         self._results_tree = None
@@ -235,7 +274,7 @@ class Stage6CreationFrame(ttk.Frame):
     def show_creation_result(self, draft_id: str, subject: str, status: str, event_id: str = "", url: str = "", errors: str = "") -> None:
         self._ensure_results_table()
         if status == "created":
-            status_text = f"Создано" + (f" (ID: {event_id})" if event_id else "")
+            status_text = "Создано" + (f" (ID: {event_id})" if event_id else "")
             tag = "created"
         elif status == "dry_run":
             status_text = "DRY RUN — payload корректен, событие не создано"

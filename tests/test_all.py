@@ -524,6 +524,203 @@ class TestStructuredExtractor:
         assert all_candidates[0].duration_confirmed is False
         assert all_candidates[0].duration_source == "missing"
 
+    def test_duration_from_column_simple_number(self):
+        from calendar_planner.domain.models import ExtractedSource, SourceReference
+        from calendar_planner.extraction.structured import StructuredExtractor
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Sheet1": [
+                    ["Тема", "Согласованная дата", "Согласованное время", "Длительность"],
+                    ["Встреча 1", "2026-08-04", "12:00", "60"],
+                ]
+            },
+        )
+
+        extractor = StructuredExtractor()
+        result = extractor.extract(source)
+
+        all_candidates = []
+        for candidates in result.values():
+            all_candidates.extend(candidates)
+
+        assert len(all_candidates) == 1
+        assert all_candidates[0].duration_minutes == 60
+        assert all_candidates[0].duration_confirmed is True
+        assert all_candidates[0].duration_source == "source_column"
+
+    def test_duration_from_column_one_hour(self):
+        from calendar_planner.domain.models import ExtractedSource, SourceReference
+        from calendar_planner.extraction.structured import StructuredExtractor
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Sheet1": [
+                    ["Тема", "Согласованная дата", "Согласованное время", "Продолжительность"],
+                    ["Встреча 1", "2026-08-04", "12:00", "1 час"],
+                ]
+            },
+        )
+
+        extractor = StructuredExtractor()
+        result = extractor.extract(source)
+
+        all_candidates = []
+        for candidates in result.values():
+            all_candidates.extend(candidates)
+
+        assert len(all_candidates) == 1
+        assert all_candidates[0].duration_minutes == 60
+        assert all_candidates[0].duration_confirmed is True
+        assert all_candidates[0].duration_source == "source_column"
+
+    def test_duration_from_column_hour_minute_format(self):
+        from calendar_planner.domain.models import ExtractedSource, SourceReference
+        from calendar_planner.extraction.structured import StructuredExtractor
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Sheet1": [
+                    ["Тема", "Согласованная дата", "Согласованное время", "Длительность встречи"],
+                    ["Встреча 1", "2026-08-04", "12:00", "1:30"],
+                ]
+            },
+        )
+
+        extractor = StructuredExtractor()
+        result = extractor.extract(source)
+
+        all_candidates = []
+        for candidates in result.values():
+            all_candidates.extend(candidates)
+
+        assert len(all_candidates) == 1
+        assert all_candidates[0].duration_minutes == 90
+        assert all_candidates[0].duration_confirmed is True
+        assert all_candidates[0].duration_source == "source_column"
+
+    def test_duration_30_min_russian(self):
+        from calendar_planner.domain.models import ExtractedSource, SourceReference
+        from calendar_planner.extraction.structured import StructuredExtractor
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Sheet1": [
+                    ["Тема", "Согласованная дата", "Согласованное время", "Длительность"],
+                    ["Встреча 1", "2026-08-04", "12:00", "30 мин"],
+                ]
+            },
+        )
+
+        extractor = StructuredExtractor()
+        result = extractor.extract(source)
+
+        all_candidates = []
+        for candidates in result.values():
+            all_candidates.extend(candidates)
+
+        assert len(all_candidates) == 1
+        assert all_candidates[0].duration_minutes == 30
+
+    def test_duration_one_and_half_hour(self):
+        from calendar_planner.domain.models import ExtractedSource, SourceReference
+        from calendar_planner.extraction.structured import StructuredExtractor
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Sheet1": [
+                    ["Тема", "Согласованная дата", "Согласованное время", "Длительность"],
+                    ["Встреча 1", "2026-08-04", "12:00", "1,5 часа"],
+                ]
+            },
+        )
+
+        extractor = StructuredExtractor()
+        result = extractor.extract(source)
+
+        all_candidates = []
+        for candidates in result.values():
+            all_candidates.extend(candidates)
+
+        assert len(all_candidates) == 1
+        assert all_candidates[0].duration_minutes == 90
+
+    def test_end_calc_cross_midnight(self):
+        from calendar_planner.domain.models import calculate_end_datetime
+
+        end_date, end_time = calculate_end_datetime(
+            "2026-08-04", "23:30", "Asia/Yekaterinburg", 90,
+        )
+        assert end_date == "2026-08-05"
+        assert end_time == "01:00"
+
+    def test_timezone_default_when_no_header(self):
+        import os
+
+        from calendar_planner.domain.models import ExtractedSource, SourceReference
+        from calendar_planner.extraction.structured import StructuredExtractor
+
+        old_tz = os.environ.get("DEFAULT_TIMEZONE", "")
+        os.environ["DEFAULT_TIMEZONE"] = "Europe/Moscow"
+        try:
+            source = ExtractedSource(
+                source=SourceReference(type="memory"),
+                sheets={
+                    "Sheet1": [
+                        ["Тема", "Согласованная дата", "Согласованное время"],
+                        ["Встреча 1", "2026-08-04", "12:00"],
+                    ]
+                },
+            )
+
+            extractor = StructuredExtractor()
+            result = extractor.extract(source)
+
+            all_candidates = []
+            for candidates in result.values():
+                all_candidates.extend(candidates)
+
+            assert len(all_candidates) == 1
+            assert all_candidates[0].timezone == "Europe/Moscow"
+            assert all_candidates[0].timezone_source == "default_value"
+            assert all_candidates[0].timezone_confirmed is False
+        finally:
+            if old_tz:
+                os.environ["DEFAULT_TIMEZONE"] = old_tz
+            else:
+                os.environ.pop("DEFAULT_TIMEZONE", None)
+
+    def test_timezone_from_column_header(self):
+        from calendar_planner.domain.models import ExtractedSource, SourceReference
+        from calendar_planner.extraction.structured import StructuredExtractor
+
+        source = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={
+                "Sheet1": [
+                    ["Тема", "Согласованная дата", "Согласованное время, ЕКБ"],
+                    ["Встреча 1", "2026-08-04", "12:00"],
+                ]
+            },
+        )
+
+        extractor = StructuredExtractor()
+        result = extractor.extract(source)
+
+        all_candidates = []
+        for candidates in result.values():
+            all_candidates.extend(candidates)
+
+        assert len(all_candidates) == 1
+        assert all_candidates[0].timezone == "Asia/Yekaterinburg"
+        assert all_candidates[0].timezone_source == "source_column"
+        assert all_candidates[0].timezone_confirmed is True
+
     def test_multi_sheet(self):
         from calendar_planner.domain.models import ExtractedSource, SourceReference
         from calendar_planner.extraction.structured import StructuredExtractor

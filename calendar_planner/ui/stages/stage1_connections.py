@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
@@ -117,6 +118,25 @@ class Stage1ConnectionsFrame(ttk.Frame):
         ttk.Button(ews_btn, text="Проверить каталог", command=self._check_directory).pack(side=tk.LEFT, padx=2)
         ttk.Button(ews_btn, text="Очистить credentials", command=self._clear_ews).pack(side=tk.LEFT, padx=2)
 
+        # Default timezone
+        tz_frame = ttk.LabelFrame(self._scrollable, text="Часовой пояс по умолчанию", padding=5)
+        tz_frame.pack(fill=tk.X, pady=5)
+        tz_row = ttk.Frame(tz_frame)
+        tz_row.pack(fill=tk.X, pady=2)
+        ttk.Label(tz_row, text="Часовой пояс:", width=15).pack(side=tk.LEFT)
+        tz_values = ["Asia/Yekaterinburg", "Europe/Moscow", "Europe/Riga", "UTC", "Другой"]
+        current_tz = os.environ.get("DEFAULT_TIMEZONE", "Asia/Yekaterinburg")
+        self._tz_var = tk.StringVar(value=current_tz if current_tz in tz_values else "Другой")
+        self._tz_combo = ttk.Combobox(tz_row, textvariable=self._tz_var, values=tz_values, state="readonly", width=30)
+        self._tz_combo.pack(side=tk.LEFT, padx=5)
+        self._tz_combo.bind("<<ComboboxSelected>>", self._on_timezone_changed)
+        self._custom_tz_var = tk.StringVar()
+        self._custom_tz_entry = ttk.Entry(tz_row, textvariable=self._custom_tz_var, width=30)
+        if self._tz_var.get() == "Другой":
+            self._custom_tz_entry.pack(side=tk.LEFT, padx=5)
+        else:
+            self._custom_tz_entry.pack_forget()
+
         # Results
         self._results_frame = ttk.LabelFrame(self._scrollable, text="Результаты проверки", padding=5)
         self._results_frame.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -194,6 +214,37 @@ class Stage1ConnectionsFrame(ttk.Frame):
         if self.container:
             self.container.reset_directory_gateway()
         self._log("EWS credentials очищены.")
+
+    def _on_timezone_changed(self, event=None):
+        selected = self._tz_var.get()
+        if selected == "Другой":
+            self._custom_tz_entry.pack(side=tk.LEFT, padx=5)
+            tz_value = self._custom_tz_var.get().strip()
+            if not tz_value:
+                return
+        else:
+            self._custom_tz_entry.pack_forget()
+            tz_value = selected
+        os.environ["DEFAULT_TIMEZONE"] = tz_value
+        env_file = Path(__file__).parent.parent.parent.parent / ".env"
+        if env_file.exists():
+            lines = env_file.read_text(encoding="utf-8").split("\n")
+            out_lines = []
+            replaced = False
+            for line in lines:
+                key = line.split("=")[0].strip() if "=" in line else ""
+                if key == "DEFAULT_TIMEZONE":
+                    out_lines.append(f"DEFAULT_TIMEZONE={tz_value}")
+                    replaced = True
+                else:
+                    out_lines.append(line)
+            if not replaced:
+                out_lines.append(f"DEFAULT_TIMEZONE={tz_value}")
+            env_file.write_text("\n".join(out_lines), encoding="utf-8")
+        else:
+            with open(env_file, "w", encoding="utf-8") as f:
+                f.write(f"DEFAULT_TIMEZONE={tz_value}\n")
+        self._log(f"Часовой пояс по умолчанию: {tz_value}")
 
     def _check_directory(self):
         if self.container is None: return

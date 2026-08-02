@@ -229,8 +229,9 @@ class MainWindow:
                 for sheet_name, sheet_cands in candidates.items():
                     all_candidates.extend(sheet_cands)
                 for c in all_candidates:
-                    self.root.after(0, lambda c=c: self.info_text.insert(tk.END,
-                        f"[{c.candidate_id}] {c.subject[:60]}\n  {c.start_date or '—'} {c.start_time or '—'} {c.timezone or '—'}\n"))
+                    tz_label = c.timezone_source if c.timezone else "—"
+                    self.root.after(0, lambda c=c, tzl=tz_label: self.info_text.insert(tk.END,
+                        f"[{c.candidate_id}] {c.subject[:60]}\n  {c.start_date or '—'} {c.start_time or '—'} {c.timezone or '—'} ({tzl})\n"))
                 self.root.after(0, lambda: self.info_text.insert(tk.END, f"\nНайдено: {len(all_candidates)} кандидатов\n"))
 
                 self.controller.set_extracted(extracted)

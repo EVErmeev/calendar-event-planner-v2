@@ -74,6 +74,13 @@ CUSTOMER_PATTERNS = [
     re.compile(r"заказчик|customer|состав\s+команды\s+заказчик", re.IGNORECASE),
 ]
 
+DURATION_PATTERNS = [
+    re.compile(r"длительность\s*(встречи)?", re.IGNORECASE),
+    re.compile(r"продолжительность", re.IGNORECASE),
+    re.compile(r"duration", re.IGNORECASE),
+    re.compile(r"минут", re.IGNORECASE),
+]
+
 TIMEZONE_PATTERNS = [
     re.compile(r"(?:мск|msk|екб|ekb|екатеринбург|yekaterinburg|нск|nsk|крд|krd)", re.IGNORECASE),
     re.compile(r"(?:часовой\s*пояс|timezone|tz)", re.IGNORECASE),
@@ -108,6 +115,7 @@ class TableSchemaDetector:
         self.planned_time_col: int | None = None
         self.actual_date_col: int | None = None
         self.actual_time_col: int | None = None
+        self.duration_col: int | None = None
         self.performer_col: int | None = None
         self.customer_col: int | None = None
         self.link_cols: list[int] = []
@@ -159,6 +167,11 @@ class TableSchemaDetector:
                 if self.actual_time_col is None and any(p.search(normalized) for p in ACTUAL_TIME_PATTERNS):
                     self.actual_time_col = col_idx
 
+                if self.duration_col is None and any(p.search(normalized) for p in DURATION_PATTERNS) and not any(
+                    p.search(normalized) for p in AGREED_TIME_PATTERNS + PLANNED_TIME_PATTERNS + ACTUAL_TIME_PATTERNS
+                ):
+                    self.duration_col = col_idx
+
                 if self.performer_col is None and any(p.search(normalized) for p in PERFORMER_PATTERNS):
                     self.performer_col = col_idx
 
@@ -197,6 +210,7 @@ class TableSchemaDetector:
             "planned_time_col": self.planned_time_col,
             "actual_date_col": self.actual_date_col,
             "actual_time_col": self.actual_time_col,
+            "duration_col": self.duration_col,
             "performer_col": self.performer_col,
             "customer_col": self.customer_col,
             "link_cols": self.link_cols,

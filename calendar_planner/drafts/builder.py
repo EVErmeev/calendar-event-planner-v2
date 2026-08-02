@@ -7,6 +7,7 @@ from calendar_planner.domain.models import (
     DraftField,
     FinalEventDraft,
     MeetingCandidate,
+    calculate_end_datetime,
 )
 
 
@@ -59,7 +60,7 @@ class DraftBuilder:
             timezone=DraftField(
                 value=candidate.timezone,
                 origin=DraftFieldOrigin.AUTO.value,
-                evidence=[{"method": "detected_from_header"}],
+                evidence=[{"method": "detected_from_header", "source": candidate.timezone_source}],
             ),
 
             duration_minutes=DraftField(
@@ -67,6 +68,15 @@ class DraftBuilder:
                 origin=DraftFieldOrigin.AUTO.value,
             ),
             duration_confirmed=candidate.duration_confirmed,
+
+            end_date=DraftField(
+                value=None,
+                origin=DraftFieldOrigin.AUTO.value,
+            ),
+            end_time=DraftField(
+                value=None,
+                origin=DraftFieldOrigin.AUTO.value,
+            ),
 
             location=DraftField(
                 value=candidate.location,
@@ -77,6 +87,17 @@ class DraftBuilder:
                 origin=DraftFieldOrigin.AUTO.value,
             ),
         )
+
+        if candidate.duration_minutes is not None and candidate.duration_minutes > 0 \
+                and candidate.start_date and candidate.start_time and draft.timezone.value:
+            end_date, end_time = calculate_end_datetime(
+                candidate.start_date,
+                candidate.start_time,
+                draft.timezone.value,
+                candidate.duration_minutes,
+            )
+            draft.end_date.value = end_date
+            draft.end_time.value = end_time
 
         if participants:
             for p in participants.performer:
