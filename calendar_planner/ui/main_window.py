@@ -596,8 +596,14 @@ class MainWindow:
         status = self.controller.get_stage_status(stage)
 
         if stage == 0 and status == "not_started":
+            if 0 in self._stage_frames:
+                frame = self._stage_frames[0]
+                if hasattr(frame, '_check_now'):
+                    frame._check_now()
+                    self._update_stage_indicators()
+                    self._update_bottom_buttons()
+                    return
             self._check_connections()
-            self.controller.set_current_stage(0)
             self._update_stage_indicators()
             self._update_bottom_buttons()
             self._show_stage_content()
@@ -653,8 +659,10 @@ class MainWindow:
         }
 
         text = btn_texts.get((stage, status))
-        if text:
+        if text and (stage != 0 or status in ("success", "success_with_warnings", "failed")):
             self._bottom_primary_btn.config(text=text, state="normal")
+        elif stage == 0:
+            self._bottom_primary_btn.config(state="disabled")
         else:
             self._bottom_primary_btn.config(text="Далее →", state="normal")
 
@@ -1025,6 +1033,7 @@ class MainWindow:
 
         self._update_stage_indicators()
         self._update_bottom_buttons()
+        self._show_stage_content()
 
     def _show_connection_error_actions(self, results: list[dict]) -> None:
         for widget in self.main_frame.winfo_children():
