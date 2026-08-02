@@ -239,9 +239,9 @@ class MainWindow:
                 self.controller.set_stage_success("stage_2")
 
                 self.root.after(0, self._hide_progress)
+                self.root.after(0, lambda: self.controller.set_current_stage(1))
                 self.root.after(0, lambda: self._update_stage_indicators())
                 self.root.after(0, self._update_bottom_buttons)
-                self.root.after(0, lambda: self.controller.set_current_stage(1))
                 self.root.after(0, self._show_stage_content)
 
             except Exception as e:
@@ -371,9 +371,8 @@ class MainWindow:
                     tk.END, f"  Совпадений: {matched_count}, новых: {new_count}\n",
                 ))
                 self.root.after(0, self._hide_progress)
-                self.root.after(0, self._update_stage_indicators)
-                self.root.after(0, self._update_bottom_buttons)
                 self.root.after(0, lambda: self.controller.set_current_stage(2))
+                self.root.after(0, self._update_stage_indicators)
                 self.root.after(0, self._show_stage_content)
 
             except Exception as exc:
@@ -441,9 +440,9 @@ class MainWindow:
                 ))
                 self.root.after(0, lambda: self.controller.set_stage_success("stage_4"))
                 self.root.after(0, self._hide_progress)
+                self.root.after(0, lambda: self.controller.set_current_stage(3))
                 self.root.after(0, self._update_stage_indicators)
                 self.root.after(0, self._update_bottom_buttons)
-                self.root.after(0, lambda: self.controller.set_current_stage(3))
                 self.root.after(0, self._show_stage_content)
 
             except Exception as exc:
@@ -493,9 +492,9 @@ class MainWindow:
                 ))
                 self.root.after(0, lambda: self.controller.set_stage_success("stage_5"))
                 self.root.after(0, self._hide_progress)
+                self.root.after(0, lambda: self.controller.set_current_stage(4))
                 self.root.after(0, self._update_stage_indicators)
                 self.root.after(0, self._update_bottom_buttons)
-                self.root.after(0, lambda: self.controller.set_current_stage(4))
                 self.root.after(0, self._show_stage_content)
 
             except Exception as exc:

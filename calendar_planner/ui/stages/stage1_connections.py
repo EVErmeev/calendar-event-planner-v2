@@ -172,6 +172,22 @@ class Stage1ConnectionsFrame(ttk.Frame):
             self._ews_pass_status_var.set("сохранён (сессия + Credential Manager)")
             self._ews_pass_var.set("")
 
+        # Also save to .env for persistence between runs
+        from pathlib import Path
+        env_file = Path(__file__).parent.parent.parent.parent / ".env"
+        if env_file.exists() and password and login:
+            lines = env_file.read_text(encoding="utf-8").split("\n")
+            updates = {"EWS_ENDPOINT": endpoint, "EWS_USERNAME": login, "EWS_PASSWORD": password}
+            new = []; seen = set()
+            for line in lines:
+                k = line.split("=")[0].strip() if "=" in line else ""
+                if k in updates:
+                    new.append(f"{k}={updates[k]}"); seen.add(k); del updates[k]
+                else: new.append(line)
+            for k, v in updates.items():
+                if v and k not in seen: new.append(f"{k}={v}")
+            env_file.write_text("\n".join(new), encoding="utf-8")
+
         self._log(f"EWS сохранён. Логин: {login}. Пароль — только в памяти.")
 
     def _clear_ews(self):
