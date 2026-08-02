@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
 import re
 
 from calendar_planner.domain.enums import MeetingDatePolicy
@@ -152,10 +155,6 @@ class StructuredExtractor:
         if not value or not value.strip():
             return None
         cleaned = value.strip().replace("\u00a0", " ")
-        try:
-            return int(cleaned)
-        except ValueError:
-            pass
         m = re.match(r"^(\d+)\s*мин(?:ут)?$", cleaned, re.IGNORECASE)
         if m:
             return int(m.group(1))
@@ -174,7 +173,25 @@ class StructuredExtractor:
             frac_str = m.group(2)
             minutes = int(float(f"0.{frac_str}") * 60)
             return hours * 60 + minutes
-        return None
+
+        try:
+            bare = int(cleaned)
+        except ValueError:
+            return None
+
+        from calendar_planner.app.settings import settings
+        unit = settings.DURATION_NUMERIC_UNIT
+        if unit == "hours":
+            return bare * 60
+        elif unit == "minutes":
+            return bare
+        else:
+            _log.warning(
+                "Duration value '%s' was parsed as a bare number (%d) with DURATION_NUMERIC_UNIT='auto' — "
+                "interpreted as minutes, verify manually.",
+                value, bare,
+            )
+            return bare
 
     def _row_to_candidate(
         self, sr: StructuredMeetingRow, counter: int, sheet_name: str

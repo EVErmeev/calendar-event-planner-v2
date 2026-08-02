@@ -5,27 +5,34 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
+from calendar_planner.ui.keyboard_shortcuts import bind_shortcuts_recursive
+
 
 class Stage1ConnectionsFrame(ttk.Frame):
-    def __init__(self, parent, container=None, on_check_done=None, **kwargs):
+    def __init__(self, parent, container=None, on_check_done=None, on_setting_changed=None, **kwargs):
         super().__init__(parent, **kwargs)
         self.container = container
         self._cred_provider = container.credential_provider if container else None
         self._on_check_done = on_check_done
+        self._on_setting_changed = on_setting_changed
         self._detected_config: dict = {}
         self._last_results: list[dict] = []
         self._ready = False
+        self._password_masked = False
 
         import os
         self._saved_endpoint = os.environ.get("EWS_ENDPOINT", "https://mail.1cbit.ru/EWS/Exchange.asmx")
         self._saved_login = os.environ.get("EWS_USERNAME", "")
+        self._cred_available = False
         if self._cred_provider:
             if self._cred_provider.has_session_credentials():
                 self._saved_pass_status = "сохранён в сессии"
+                self._cred_available = True
             else:
                 creds = self._cred_provider.load_persistent(self._saved_login)
                 if creds.available:
                     self._saved_pass_status = "загружен из Credential Manager"
+                    self._cred_available = True
                 else:
                     self._saved_pass_status = "не задан"
         else:
@@ -36,6 +43,8 @@ class Stage1ConnectionsFrame(ttk.Frame):
             self._ready = container.check_all_connections().get("ready_for_analysis", False)
 
         self._build_ui()
+        if self._cred_available:
+            self._apply_password_mask()
         # Restore last results if available
         if self._ready and self._last_results:
             self._display_results(self._last_results, self._ready)
@@ -101,7 +110,9 @@ class Stage1ConnectionsFrame(ttk.Frame):
         row = ttk.Frame(ews_frame); row.pack(fill=tk.X, pady=2)
         ttk.Label(row, text="Пароль:", width=15).pack(side=tk.LEFT)
         self._ews_pass_var = tk.StringVar()
-        ttk.Entry(row, textvariable=self._ews_pass_var, width=25, show="*").pack(side=tk.LEFT, padx=5)
+        self._ews_pass_entry = ttk.Entry(row, textvariable=self._ews_pass_var, width=25, show="*")
+        self._ews_pass_entry.pack(side=tk.LEFT, padx=5)
+        self._change_pass_btn = ttk.Button(row, text="Изменить", command=self._on_change_password)
         self._ews_pass_status_var = tk.StringVar(value=self._saved_pass_status)
         ttk.Label(row, textvariable=self._ews_pass_status_var, font=("", 7), foreground="gray").pack(side=tk.LEFT, padx=5)
         row = ttk.Frame(ews_frame); row.pack(fill=tk.X, pady=2)
@@ -135,6 +146,23 @@ class Stage1ConnectionsFrame(ttk.Frame):
         else:
             self._custom_tz_entry.pack_forget()
 
+        # Calendar missing timezone fallback
+        cal_tz_row = ttk.Frame(tz_frame)
+        cal_tz_row.pack(fill=tk.X, pady=2)
+        ttk.Label(cal_tz_row, text="Календарь без tz:", width=15).pack(side=tk.LEFT)
+        cal_tz_values = ["UTC", "Asia/Yekaterinburg", "Europe/Moscow", "Europe/Riga", "Другой"]
+        current_cal_tz = os.environ.get("CALENDAR_MISSING_TIMEZONE", "UTC")
+        self._cal_tz_var = tk.StringVar(value=current_cal_tz if current_cal_tz in cal_tz_values else "Другой")
+        self._cal_tz_combo = ttk.Combobox(cal_tz_row, textvariable=self._cal_tz_var, values=cal_tz_values, state="readonly", width=30)
+        self._cal_tz_combo.pack(side=tk.LEFT, padx=5)
+        self._cal_tz_combo.bind("<<ComboboxSelected>>", self._on_calendar_tz_changed)
+        self._custom_cal_tz_var = tk.StringVar()
+        self._custom_cal_tz_entry = ttk.Entry(cal_tz_row, textvariable=self._custom_cal_tz_var, width=30)
+        if self._cal_tz_var.get() == "Другой":
+            self._custom_cal_tz_entry.pack(side=tk.LEFT, padx=5)
+        else:
+            self._custom_cal_tz_entry.pack_forget()
+
         # Results
         self._results_frame = ttk.LabelFrame(self._scrollable, text="Результаты проверки", padding=5)
         self._results_frame.pack(fill=tk.BOTH, expand=True, pady=5)
@@ -145,7 +173,37 @@ class Stage1ConnectionsFrame(ttk.Frame):
         self._status_label = ttk.Label(self._scrollable, textvariable=self._status_var, font=("", 9, "bold"))
         self._status_label.pack(anchor=tk.W, pady=5)
 
+        bind_shortcuts_recursive(self._scrollable)
+
+    def _apply_password_mask(self):
+        self._ews_pass_var.set("••••••••")
+        self._ews_pass_entry.configure(state="readonly")
+        self._password_masked = True
+        self._change_pass_btn.pack(side=tk.LEFT, padx=5)
+
+    def _on_change_password(self):
+        self._ews_pass_entry.configure(state="normal")
+        self._ews_pass_var.set("")
+        self._password_masked = False
+        self._change_pass_btn.pack_forget()
+        self._ews_pass_status_var.set("введите новый пароль")
+
     def _auto_detect(self):
+        if self.container and self.container._mcp_transport and self.container._mcp_transport.is_connected():
+            transport = self.container._mcp_transport
+            tool_names = transport.list_tools()
+            has_find = "find_events" in tool_names
+            has_create = "create_event" in tool_names
+            if has_find and has_create:
+                cmd = getattr(transport, "command", "")
+                self._command_var.set(cmd)
+                self._transport_var.set("exchange-stdio")
+                self._find_tool_var.set("find_events")
+                self._create_tool_var.set("create_event")
+                self._log(f"Exchange MCP найден. Источник: активное подключение. Транспорт: local stdio. Tools: {len(tool_names)}.")
+                self._status_var.set("Exchange MCP найден. Нажмите «Проверить подключения»")
+                return
+
         try:
             from calendar_planner.app.exchange_detector import ExchangeMCPConfigDetector
             config = ExchangeMCPConfigDetector().detect()
@@ -168,6 +226,32 @@ class Stage1ConnectionsFrame(ttk.Frame):
         login = self._ews_login_var.get().strip()
         password = self._ews_pass_var.get().strip()
 
+        # If mask is still active and no new password typed, don't overwrite credential
+        if self._password_masked and password == "••••••••":
+            if self.container:
+                self.container.configure_ews(endpoint, login, None)
+            self._log(f"EWS сохранён. Логин: {login}. Пароль не изменён.")
+            env_file = Path(__file__).parent.parent.parent.parent / ".env"
+            if env_file.exists():
+                lines = env_file.read_text(encoding="utf-8").split("\n")
+                updates = {"EWS_ENDPOINT": endpoint, "EWS_USERNAME": login}
+                out_lines = []
+                replaced = set()
+                for line in lines:
+                    key = line.split("=")[0].strip() if "=" in line else ""
+                    if key == "EWS_PASSWORD":
+                        continue
+                    if key in updates:
+                        out_lines.append(f"{key}={updates[key]}")
+                        replaced.add(key)
+                    else:
+                        out_lines.append(line)
+                for key, val in updates.items():
+                    if val and key not in replaced:
+                        out_lines.append(f"{key}={val}")
+                env_file.write_text("\n".join(out_lines), encoding="utf-8")
+            return
+
         if self.container:
             self.container.configure_ews(endpoint, login, password if password else None)
 
@@ -182,6 +266,8 @@ class Stage1ConnectionsFrame(ttk.Frame):
             else:
                 self._ews_pass_status_var.set("сохранён в сессии")
             self._ews_pass_var.set("")
+            self._password_masked = False
+            self._change_pass_btn.pack_forget()
 
         # Save endpoint/login to .env (NEVER password)
         env_file = Path(__file__).parent.parent.parent.parent / ".env"
@@ -211,6 +297,9 @@ class Stage1ConnectionsFrame(ttk.Frame):
         self._ews_login_var.set("")
         self._ews_pass_var.set("")
         self._ews_pass_status_var.set("не задан")
+        self._password_masked = False
+        self._ews_pass_entry.configure(state="normal")
+        self._change_pass_btn.pack_forget()
         if self._cred_provider:
             self._cred_provider.clear_session_credentials()
             if login:
@@ -250,11 +339,48 @@ class Stage1ConnectionsFrame(ttk.Frame):
                 f.write(f"DEFAULT_TIMEZONE={tz_value}\n")
         self._log(f"Часовой пояс по умолчанию: {tz_value}")
 
+    def _on_calendar_tz_changed(self, event=None):
+        selected = self._cal_tz_var.get()
+        if selected == "Другой":
+            self._custom_cal_tz_entry.pack(side=tk.LEFT, padx=5)
+            tz_value = self._custom_cal_tz_var.get().strip()
+            if not tz_value:
+                return
+        else:
+            self._custom_cal_tz_entry.pack_forget()
+            tz_value = selected
+        os.environ["CALENDAR_MISSING_TIMEZONE"] = tz_value
+        from calendar_planner.app.settings import settings
+        settings.CALENDAR_MISSING_TIMEZONE = tz_value
+        env_file = Path(__file__).parent.parent.parent.parent / ".env"
+        if env_file.exists():
+            lines = env_file.read_text(encoding="utf-8").split("\n")
+            out_lines = []
+            replaced = False
+            for line in lines:
+                key = line.split("=")[0].strip() if "=" in line else ""
+                if key == "CALENDAR_MISSING_TIMEZONE":
+                    out_lines.append(f"CALENDAR_MISSING_TIMEZONE={tz_value}")
+                    replaced = True
+                else:
+                    out_lines.append(line)
+            if not replaced:
+                out_lines.append(f"CALENDAR_MISSING_TIMEZONE={tz_value}")
+            env_file.write_text("\n".join(out_lines), encoding="utf-8")
+        else:
+            with open(env_file, "w", encoding="utf-8") as f:
+                f.write(f"CALENDAR_MISSING_TIMEZONE={tz_value}\n")
+        self._log(f"Часовой пояс для событий без tz: {tz_value}")
+        if self._on_setting_changed:
+            self._on_setting_changed()
+
     def _check_directory(self):
         if self.container is None: return
         ep = self._ews_endpoint_var.get().strip()
         lg = self._ews_login_var.get().strip()
         pw = self._ews_pass_var.get().strip()
+        if pw == "••••••••":
+            pw = ""
         if not pw and self._cred_provider:
             c = self._cred_provider.get_credentials()
             if c.available: pw = c.password
@@ -291,6 +417,8 @@ class Stage1ConnectionsFrame(ttk.Frame):
         ep = self._ews_endpoint_var.get().strip()
         lg = self._ews_login_var.get().strip()
         pw = self._ews_pass_var.get().strip()
+        if pw == "••••••••":
+            pw = ""
         if not pw and self._cred_provider:
             c = self._cred_provider.get_credentials()
             if c.available: pw = c.password

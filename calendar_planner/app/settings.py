@@ -12,6 +12,7 @@ class Settings:
         self.DRY_RUN: bool = os.getenv("DRY_RUN", "true").lower() == "true"
         self.DEFAULT_TIMEZONE: str = os.getenv("DEFAULT_TIMEZONE", "Asia/Yekaterinburg")
         self.DEFAULT_DURATION_SUGGESTION: int = int(os.getenv("DEFAULT_DURATION_SUGGESTION", "60"))
+        self.DURATION_NUMERIC_UNIT: str = os.getenv("DURATION_NUMERIC_UNIT", "auto")
         self.MEETING_DATE_POLICY: MeetingDatePolicy = MeetingDatePolicy(
             os.getenv("MEETING_DATE_POLICY", "AGREED_ONLY")
         )
@@ -24,6 +25,7 @@ class Settings:
         self.CALENDAR_SUBJECT_THRESHOLD: float = float(
             os.getenv("CALENDAR_SUBJECT_THRESHOLD", "0.75")
         )
+        self.CALENDAR_MISSING_TIMEZONE: str = os.getenv("CALENDAR_MISSING_TIMEZONE", "UTC")
         self.CONTACT_FUZZY_THRESHOLD: float = float(
             os.getenv("CONTACT_FUZZY_THRESHOLD", "0.85")
         )

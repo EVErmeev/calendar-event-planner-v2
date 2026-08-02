@@ -4,6 +4,7 @@ import json
 import logging
 import re
 
+from calendar_planner.app.settings import settings
 from calendar_planner.calendar.datetime_normalizer import parse_iso_datetime
 from calendar_planner.domain.models import CalendarEvent
 
@@ -290,14 +291,18 @@ class MCPCalendarGateway:
             start = None
             if start_str:
                 try:
-                    start = parse_iso_datetime(start_str, start_tz)
+                    fallback_tz = settings.CALENDAR_MISSING_TIMEZONE
+                    if not start_tz:
+                        self._tz_naive_count += 1
+                    start = parse_iso_datetime(start_str, start_tz, fallback_tz=fallback_tz)
                 except Exception:
                     _logger.debug("Failed to parse start datetime: %s", start_str)
 
             end = None
             if end_str:
                 try:
-                    end = parse_iso_datetime(end_str, end_tz)
+                    fallback_tz = settings.CALENDAR_MISSING_TIMEZONE
+                    end = parse_iso_datetime(end_str, end_tz, fallback_tz=fallback_tz)
                 except Exception:
                     _logger.debug("Failed to parse end datetime: %s", end_str)
 

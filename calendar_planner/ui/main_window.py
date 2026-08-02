@@ -7,6 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 from calendar_planner.domain.enums import StageStatus
 from calendar_planner.session.storage import SessionStorage
 from calendar_planner.ui.controllers import StageController
+from calendar_planner.ui.keyboard_shortcuts import bind_shortcuts
 
 
 def _format_errors(errors: list) -> str:
@@ -29,6 +30,9 @@ class MainWindow:
         self.storage = SessionStorage()
 
         self._stage_frames: dict[int, tk.Widget] = {}
+
+        self._operation_active = False
+        self._operation_stage = None
 
         self._build_ui()
 
@@ -81,6 +85,7 @@ class MainWindow:
         self.source_var = tk.StringVar()
         self.source_entry = ttk.Entry(top_frame, textvariable=self.source_var, width=60)
         self.source_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        bind_shortcuts(self.source_entry)
 
         ttk.Button(top_frame, text="Выбрать", command=self._select_file).pack(side=tk.LEFT, padx=2)
         ttk.Button(top_frame, text="Вставить ссылку", command=self._paste_url).pack(side=tk.LEFT, padx=2)
@@ -91,7 +96,7 @@ class MainWindow:
 
         self.stage_labels: list[ttk.Label] = []
         self.stage_status_labels: list[ttk.Label] = []
-        stage_names = [
+        self._stage_base_names = [
             "1. Подключения",
             "2. Поиск встреч",
             "3. Сравнение",
@@ -99,6 +104,7 @@ class MainWindow:
             "5. Дополнительные данные",
             "6. Создание",
         ]
+        stage_names = self._stage_base_names
 
         for i, name in enumerate(stage_names):
             frame = ttk.Frame(sidebar)
@@ -129,6 +135,7 @@ class MainWindow:
 
         self.info_text = tk.Text(self.content_frame, height=4, wrap=tk.WORD, font=("Consolas", 9))
         self.info_text.pack(fill=tk.X, pady=5)
+        bind_shortcuts(self.info_text)
         self.info_text.insert(tk.END, (
             "Этот проект - новый самостоятельный календарный планировщик.\n"
             "Он анализирует источник, находит встречи, сравнивает с календарем,\n"
@@ -174,6 +181,10 @@ class MainWindow:
             messagebox.showwarning("Ошибка", "Не удалось вставить из буфера обмена")
 
     def _run_analysis(self) -> None:
+        if self._operation_active:
+            messagebox.showwarning("Операция выполняется", "Операция выполняется")
+            return
+
         source = self.source_var.get().strip()
         if not source:
             messagebox.showwarning("Внимание", "Укажите файл или ссылку")
@@ -258,6 +269,9 @@ class MainWindow:
 
     def _run_stage_3_async(self):
         """Run calendar comparison in background thread."""
+        self._operation_active = True
+        self._operation_stage = "stage_3"
+
         # prerequisite: stage 2 (index 1) must be success
         stage_2_status = self.controller.get_stage_status(1)
         if stage_2_status not in ("success", "success_with_warnings"):
@@ -322,18 +336,25 @@ class MainWindow:
                             "error": str(exc),
                         })
                         self.root.after(0, self._hide_progress)
+                        self._operation_active = False
+                        self._operation_stage = None
                         self.root.after(0, self._update_stage_indicators)
                         self.root.after(0, self._update_bottom_buttons)
                         return
 
                 if self._cancel_requested:
                     self.root.after(0, lambda: self.info_text.insert(tk.END, "\n[ОТМЕНЕНО]\n"))
+                    self._operation_active = False
+                    self._operation_stage = None
                     self.root.after(0, self._hide_progress)
                     self.root.after(0, self._update_stage_indicators)
                     self.root.after(0, self._update_bottom_buttons)
                     return
 
-                matcher = CalendarMatcher(tolerance_minutes=30, subject_threshold=0.75)
+                matcher = CalendarMatcher(
+                    tolerance_minutes=settings.CALENDAR_MATCH_TOLERANCE_MINUTES,
+                    subject_threshold=settings.CALENDAR_SUBJECT_THRESHOLD,
+                )
                 matches = matcher.match_all(all_candidates, calendar_events)
                 self.controller.set_matches(matches)
                 self.controller.set_calendar_events(calendar_events)
@@ -371,12 +392,16 @@ class MainWindow:
                 self.root.after(0, lambda: self.info_text.insert(
                     tk.END, f"  Совпадений: {matched_count}, новых: {new_count}\n",
                 ))
+                self._operation_active = False
+                self._operation_stage = None
                 self.root.after(0, self._hide_progress)
                 self.root.after(0, lambda: self.controller.set_current_stage(2))
                 self.root.after(0, self._update_stage_indicators)
                 self.root.after(0, self._show_stage_content)
 
             except Exception as exc:
+                self._operation_active = False
+                self._operation_stage = None
                 self.root.after(0, lambda e_=exc: self.info_text.insert(tk.END, f"  ОШИБКА этапа 3: {e_}\n"))
                 self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_3", str(e_)))
                 self.controller.set_stage3_diagnostics({
@@ -400,6 +425,9 @@ class MainWindow:
 
     def _run_stage_4_async(self):
         """Run participant resolution in background thread."""
+        self._operation_active = True
+        self._operation_stage = "stage_4"
+
         # prerequisite: stage 3 (index 2) must be success
         stage_3_status = self.controller.get_stage_status(2)
         if stage_3_status not in ("success", "success_with_warnings"):
@@ -441,12 +469,16 @@ class MainWindow:
                 ))
                 self.root.after(0, lambda: self.controller.set_stage_success("stage_4"))
                 self.root.after(0, self._hide_progress)
+                self._operation_active = False
+                self._operation_stage = None
                 self.root.after(0, lambda: self.controller.set_current_stage(3))
                 self.root.after(0, self._update_stage_indicators)
                 self.root.after(0, self._update_bottom_buttons)
                 self.root.after(0, self._show_stage_content)
 
             except Exception as exc:
+                self._operation_active = False
+                self._operation_stage = None
                 self.root.after(0, lambda e_=exc: self.info_text.insert(tk.END, f"  ОШИБКА этапа 4: {e_}\n"))
                 self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_4", str(e_)))
                 self.root.after(0, self._hide_progress)
@@ -459,6 +491,9 @@ class MainWindow:
 
     def _run_stage_5_async(self):
         """Run enrichment in background thread."""
+        self._operation_active = True
+        self._operation_stage = "stage_5"
+
         # prerequisite: stage 4 (index 3) must be success
         stage_4_status = self.controller.get_stage_status(3)
         if stage_4_status not in ("success", "success_with_warnings"):
@@ -493,12 +528,16 @@ class MainWindow:
                 ))
                 self.root.after(0, lambda: self.controller.set_stage_success("stage_5"))
                 self.root.after(0, self._hide_progress)
+                self._operation_active = False
+                self._operation_stage = None
                 self.root.after(0, lambda: self.controller.set_current_stage(4))
                 self.root.after(0, self._update_stage_indicators)
                 self.root.after(0, self._update_bottom_buttons)
                 self.root.after(0, self._show_stage_content)
 
             except Exception as exc:
+                self._operation_active = False
+                self._operation_stage = None
                 self.root.after(0, lambda e_=exc: self.info_text.insert(tk.END, f"  ОШИБКА этапа 5: {e_}\n"))
                 self.root.after(0, lambda e_=exc: self.controller.set_stage_error("stage_5", str(e_)))
                 self.root.after(0, self._hide_progress)
@@ -581,6 +620,10 @@ class MainWindow:
         self._show_stage_content()
 
     def _go_to_stage(self, stage: int) -> None:
+        if self._operation_active:
+            messagebox.showinfo("Внимание", "Дождитесь завершения текущей операции")
+            return
+
         for s in range(stage):
             status = self.controller.get_stage_status(s)
             if status not in ("success", "success_with_warnings"):
@@ -592,6 +635,10 @@ class MainWindow:
         self._show_stage_content()
 
     def _primary_action(self) -> None:
+        if self._operation_active:
+            messagebox.showwarning("Операция выполняется", "Операция выполняется")
+            return
+
         stage = self.controller.current_stage
         status = self.controller.get_stage_status(stage)
 
@@ -638,6 +685,10 @@ class MainWindow:
             self._show_stage_content()
 
     def _update_bottom_buttons(self) -> None:
+        if self._operation_active:
+            self._bottom_primary_btn.config(state=tk.DISABLED)
+            return
+
         stage = self.controller.current_stage
         status = self.controller.get_stage_status(stage)
 
@@ -683,6 +734,13 @@ class MainWindow:
         self._update_stage_indicators()
         self._update_bottom_buttons()
 
+    def _invalidate_stage_3(self) -> None:
+        """Set stage 3 to stale when calendar timezone setting changes."""
+        status = self.controller.get_stage_status(2)
+        if status in ("success", "success_with_warnings"):
+            self.controller.stages[2].status = StageStatus.STALE
+            self._update_stage_indicators()
+
     def _copy_results(self) -> None:
         text = self.info_text.get(1.0, tk.END)
         self.root.clipboard_clear()
@@ -698,14 +756,18 @@ class MainWindow:
             "stale": "gray",
             "not_started": "lightgray",
         }
+        stage_map = {"stage_3": 2, "stage_4": 3, "stage_5": 4}
+        op_index = stage_map.get(self._operation_stage) if self._operation_active else None
         for i, (lbl, st_lbl) in enumerate(zip(self.stage_labels, self.stage_status_labels)):
             status = self.controller.get_stage_status(i)
             color = colors.get(status, "lightgray")
             st_lbl.config(foreground=color)
-            if i == self.controller.current_stage:
-                lbl.config(font=("", 9, "bold"))
+            if self._operation_active and i == op_index:
+                lbl.config(text=self._stage_base_names[i] + " ...", font=("", 9, "bold"))
+            elif i == self.controller.current_stage:
+                lbl.config(text=self._stage_base_names[i], font=("", 9, "bold"))
             else:
-                lbl.config(font=("", 9))
+                lbl.config(text=self._stage_base_names[i], font=("", 9))
 
     def _show_stage_content(self) -> None:
         for widget in self.content_frame.winfo_children():
@@ -749,7 +811,11 @@ class MainWindow:
                 self.controller.set_stage_error("stage_1", "Не все компоненты готовы")
             self._update_stage_indicators()
             self._update_bottom_buttons()
-        frame = Stage1ConnectionsFrame(self.content_frame, container=self.container, on_check_done=on_check)
+        frame = Stage1ConnectionsFrame(
+            self.content_frame, container=self.container,
+            on_check_done=on_check,
+            on_setting_changed=self._invalidate_stage_3,
+        )
         frame.pack(fill=tk.BOTH, expand=True)
         self._stage_frames[0] = frame
 
@@ -855,7 +921,10 @@ class MainWindow:
                 messagebox.showerror("Ошибка", f"Не удалось получить события календаря: {exc}")
                 raise
 
-            matcher = CalendarMatcher(tolerance_minutes=30, subject_threshold=0.75)
+            matcher = CalendarMatcher(
+                tolerance_minutes=settings.CALENDAR_MATCH_TOLERANCE_MINUTES,
+                subject_threshold=settings.CALENDAR_SUBJECT_THRESHOLD,
+            )
             match = matcher.recheck_for_draft(
                 subject=draft.subject.value or "",
                 start_date=draft.start_date.value or "",
