@@ -933,8 +933,18 @@ class MainWindow:
 
             frame_obj = frame if frame is not None else self._stage_frames.get(5)
             if frame_obj is not None:
-                event_id = result.get("event_id", "") or result.get("result", {}).get("id", "")
-                event_url = result.get("url", "") or result.get("result", {}).get("htmlLink", "")
+                event_id = result.get("event_id", "")
+                if not event_id:
+                    r = result.get("result", {})
+                    if isinstance(r, dict):
+                        event_id = r.get("id", "") or r.get("event_id", "")
+                    elif isinstance(r, str):
+                        event_id = r[:50]
+                event_url = result.get("url", "")
+                if not event_url:
+                    r = result.get("result", {})
+                    if isinstance(r, dict):
+                        event_url = r.get("htmlLink", "") or r.get("url", "")
                 status = result.get("status", "error")
                 errors = _format_errors(result.get("errors", []))
                 frame_obj.show_creation_result(
