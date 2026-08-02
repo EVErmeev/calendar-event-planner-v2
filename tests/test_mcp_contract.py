@@ -452,6 +452,7 @@ class TestContainerFixturePolicy:
         container._mcp_initialized = True
         container._calendar_gateway = mock.MagicMock()
         container._directory_gateway = mock.MagicMock()
+        container._directory_gateway_revision = container.credential_provider.credentials_revision
 
         cal = container.get_calendar_gateway()
         assert cal is container._calendar_gateway

@@ -17,11 +17,14 @@ class AppContainer:
         self.settings = settings
         self._calendar_gateway = None
         self._directory_gateway = None
+        self._directory_gateway_revision: int = -1
         self._mcp_transport: MCPTransport | StdioMCPTransport | None = None
         self._mcp_initialized = False
         self._mcp_disabled_or_unavailable = False
         self._init_warnings: list[str] = []
         self.credential_provider = CredentialProvider()
+        self.ews_credentials_state: dict = {"available": False, "source": "none", "username": ""}
+        self._initialize_ews_credentials()
 
     @property
     def _is_test_env(self) -> bool:
@@ -94,9 +97,30 @@ class AppContainer:
             "Ensure MCP is initialized before calling get_calendar_gateway()."
         )
 
+    def _initialize_ews_credentials(self) -> None:
+        username = self.settings.EWS_USERNAME or ""
+        if username:
+            result = self.credential_provider.load_persistent(username)
+            if result.available:
+                self.ews_credentials_state = {"available": True, "source": result.source, "username": username}
+                return
+        self.ews_credentials_state = {"available": False, "source": "none", "username": username or ""}
+
+    def reload_persistent_ews_credentials(self):
+        username = self.settings.EWS_USERNAME or ""
+        result = self.credential_provider.load_persistent(username)
+        self._directory_gateway = None
+        self._directory_gateway_revision = -1
+        if result.available:
+            self.ews_credentials_state = {"available": True, "source": result.source, "username": username}
+        return result
+
     def get_directory_gateway(self):
         if self._directory_gateway is not None:
-            return self._directory_gateway
+            current_rev = self.credential_provider.credentials_revision
+            if self._directory_gateway_revision == current_rev:
+                return self._directory_gateway
+            self._directory_gateway = None
 
         # Test env always uses fixture
         if self._is_test_env:
@@ -112,12 +136,15 @@ class AppContainer:
         from calendar_planner.participants.ews_directory_gateway import (
             EWSDirectoryGateway,
         )
-        self._directory_gateway = EWSDirectoryGateway(
+        gw = EWSDirectoryGateway(
             endpoint=endpoint,
             username=creds.username if creds.available else (self.settings.EWS_USERNAME or ""),
             password=creds.password if creds.available else "",
         )
-        return self._directory_gateway
+        if creds.available:
+            self._directory_gateway = gw
+            self._directory_gateway_revision = self.credential_provider.credentials_revision
+        return gw
 
     def configure_ews(self, endpoint: str, username: str, password: str | None) -> None:
         """Configure EWS and reset cached gateway. Password stored in session only."""

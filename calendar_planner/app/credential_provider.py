@@ -42,6 +42,7 @@ class CredentialProvider:
     def __init__(self):
         self._session_username: str = ""
         self._session_password: str = ""
+        self.credentials_revision: int = 0
 
     def get_credentials(self) -> CredentialResult:
         if self._session_username and self._session_password:
@@ -52,10 +53,12 @@ class CredentialProvider:
     def set_session_credentials(self, username: str, password: str) -> None:
         self._session_username = username
         self._session_password = password
+        self.credentials_revision += 1
 
     def clear_session_credentials(self) -> None:
         self._session_username = ""
         self._session_password = ""
+        self.credentials_revision += 1
 
     def has_session_credentials(self) -> bool:
         return bool(self._session_username and self._session_password)
@@ -69,6 +72,7 @@ class CredentialProvider:
             if verify == password:
                 self._session_username = username
                 self._session_password = password
+                self.credentials_revision += 1
                 return CredentialOperationResult(success=True, source="credential_manager", safe_message="Saved to Windows Credential Manager")
             return CredentialOperationResult(success=False, source="credential_manager", error_code="VERIFY_FAILED", safe_message="Saved but verification failed")
         except Exception as e:
@@ -80,6 +84,7 @@ class CredentialProvider:
             import keyring
             keyring.delete_password(SERVICE_NAME, username)
             self.clear_session_credentials()
+            self.credentials_revision += 1
             return CredentialOperationResult(success=True, source="credential_manager", safe_message="Deleted from Windows Credential Manager")
         except Exception as e:
             logger.warning("Credential Manager delete failed: %s", e)
@@ -92,6 +97,7 @@ class CredentialProvider:
             if stored:
                 self._session_username = username
                 self._session_password = stored
+                self.credentials_revision += 1
                 return CredentialResult(username=username, password=stored, source="credential_manager", available=True)
         except Exception:
             logger.debug("keyring load failed", exc_info=True)
