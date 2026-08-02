@@ -119,7 +119,7 @@ class Stage1ConnectionsFrame(ttk.Frame):
         self._results_text = tk.Text(self._results_frame, height=14, wrap=tk.WORD, font=("Consolas", 9))
         self._results_text.pack(fill=tk.BOTH, expand=True)
 
-        self._status_var = tk.StringVar(value="Нажмите «Проверить подключения»")
+        self._status_var = tk.StringVar(value="1. Нажмите «Определить автоматически»\n2. Затем «Проверить подключения»")
         self._status_label = ttk.Label(self._scrollable, textvariable=self._status_var, font=("", 9, "bold"))
         self._status_label.pack(anchor=tk.W, pady=5)
 
@@ -231,7 +231,23 @@ class Stage1ConnectionsFrame(ttk.Frame):
             self.container.configure_ews(ep, lg, pw if pw else None)
 
         result = self.container.check_all_connections()
-        self._display_results(result.get("results", []), result.get("ready_for_analysis", False))
+        ready = result.get("ready_for_analysis", False)
+        self._display_results(result.get("results", []), ready)
+
+        # Update MainWindow's controller so bottom button appears
+        try:
+            mw = self.winfo_toplevel()
+            if hasattr(mw, 'controller'):
+                if ready:
+                    mw.controller.set_stage_success("stage_1")
+                else:
+                    mw.controller.set_stage_error("stage_1", "Не все компоненты готовы")
+                if hasattr(mw, '_update_bottom_buttons'):
+                    mw._update_bottom_buttons()
+                if hasattr(mw, '_update_stage_indicators'):
+                    mw._update_stage_indicators()
+        except Exception:
+            pass
 
     def _display_results(self, results, ready):
         self._last_results = results
