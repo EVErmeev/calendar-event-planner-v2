@@ -20,8 +20,15 @@ class Stage1ConnectionsFrame(ttk.Frame):
             self._saved_pass_status = "сохранён в сессии"
         else:
             self._saved_pass_status = "не задан"
+        self._saved_ready = False
+        if container:
+            # Preserve readiness from previous check
+            self._ready = container.check_all_connections().get("ready_for_analysis", False)
 
         self._build_ui()
+        # Restore last results if available
+        if self._ready and self._last_results:
+            self._display_results(self._last_results, self._ready)
 
     def _build_ui(self):
         self._outer_canvas = tk.Canvas(self)
@@ -213,14 +220,17 @@ class Stage1ConnectionsFrame(ttk.Frame):
             self.container.configure_ews(ep, lg, pw if pw else None)
 
         result = self.container.check_all_connections()
-        self._last_results = result.get("results", [])
-        self._ready = result.get("ready_for_analysis", False)
-        for r in self._last_results:
+        self._display_results(result.get("results", []), result.get("ready_for_analysis", False))
+
+    def _display_results(self, results, ready):
+        self._last_results = results
+        self._ready = ready
+        for r in results:
             sym = {"success": "OK", "failed": "FAIL", "warning": "WARN"}.get(r.get("status", ""), "?")
             self._log(f"  [{sym}] {r.get('component', '?')}: {r.get('message', '')}")
-        s = "ГОТОВ К АНАЛИЗУ" if self._ready else "НЕ ГОТОВ"
+        s = "ГОТОВ К АНАЛИЗУ" if ready else "НЕ ГОТОВ"
         self._status_var.set(s)
-        self._status_label.config(foreground="green" if self._ready else "red")
+        self._status_label.config(foreground="green" if ready else "red")
 
     def get_ready(self) -> bool: return self._ready
     def get_results(self) -> list[dict]: return self._last_results
