@@ -840,9 +840,8 @@ class TestEventCreator:
 
         payload = creator.build_payload(draft)
         assert payload["subject"] == "Демонстрация процессов: Управление производством"
-        assert payload["start"]["dateTime"] == "2026-08-04T12:00:00"
-        assert payload["start"]["timeZone"] == "Asia/Yekaterinburg"
-        assert payload["end"]["dateTime"] == "2026-08-04T13:00:00"
+        assert payload["start"] == "2026-08-04 12:00"
+        assert payload["end"] == "2026-08-04 13:00"
         assert len(payload["attendees"]) == 1
 
     def test_create_one_dry_run(self):
@@ -5347,13 +5346,9 @@ class TestCreatorCoverageComplete:
 
         payload = creator.build_payload(draft)
         assert payload["subject"] == "All Day Event"
-        assert "dateTime" not in payload["start"]
-        assert "date" in payload["start"]
-        assert payload["start"]["date"] == "2026-08-04"
-        assert payload["start"]["timeZone"] == "Asia/Yekaterinburg"
-        assert "date" in payload["end"]
-        assert payload["end"]["date"] == "2026-08-04"
-        assert payload["end"]["timeZone"] == "Asia/Yekaterinburg"
+        assert payload["start"] == "2026-08-04"
+        assert payload["end"] == "2026-08-04"
+        assert payload["is_all_day"] is True
 
     def test_get_all_results_accumulates(self):
         from calendar_planner.calendar.creator import EventCreator
@@ -5410,19 +5405,18 @@ class TestCreatorCoverageComplete:
         errors = creator.validate_payload({})
         assert len(errors) > 0
         assert any("subject" in e for e in errors)
-        assert any("dateTime" in e for e in errors)
-        assert any("timeZone" in e for e in errors)
+        assert any("start" in e for e in errors)
 
         errors2 = creator.validate_payload({
             "subject": "Test",
-            "start": {"dateTime": "2026-08-04T12:00:00", "timeZone": "Asia/Yekaterinburg"},
+            "start": "2026-08-04 12:00",
         })
         assert any("end" in e for e in errors2)
 
         errors3 = creator.validate_payload({
             "subject": "Test",
-            "start": {"dateTime": "2026-08-04T12:00:00", "timeZone": "Asia/Yekaterinburg"},
-            "end": {"dateTime": "2026-08-04T11:00:00"},
+            "start": "2026-08-04 12:00",
+            "end": "2026-08-04 11:00",
         })
         assert any("end must be after start" in e for e in errors3)
 
@@ -5648,7 +5642,7 @@ class TestMainWindowSequentialWorkflow:
         assert "errors" in result
         assert "payload" in result
         error_texts = [e.lower() for e in result["errors"]]
-        assert any("datetime" in e for e in error_texts)
+        assert any("end" in e for e in error_texts)
 
 
 class TestAppContainerDirectoryGateway:

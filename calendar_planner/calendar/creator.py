@@ -15,28 +15,18 @@ class EventCreator:
     def build_payload(self, draft: FinalEventDraft) -> dict:
         payload: dict[str, Any] = {
             "subject": draft.subject.value or "",
-            "start": {
-                "dateTime": f"{draft.start_date.value}T{draft.start_time.value}:00",
-                "timeZone": draft.timezone.value or "UTC",
-            },
+            "start": f"{draft.start_date.value} {draft.start_time.value}",
         }
 
         if draft.is_all_day:
-            payload["start"] = {
-                "date": draft.start_date.value,
-                "timeZone": draft.timezone.value or "UTC",
-            }
-            payload["end"] = {
-                "date": draft.start_date.value,
-                "timeZone": draft.timezone.value or "UTC",
-            }
+            payload["start"] = draft.start_date.value
+            payload["end"] = draft.start_date.value
+            payload["is_all_day"] = True
         else:
             end_date, end_time = draft.compute_end_datetime()
             if end_date and end_time:
-                payload["end"] = {
-                    "dateTime": f"{end_date}T{end_time}:00",
-                    "timeZone": draft.timezone.value or "UTC",
-                }
+                payload["end"] = f"{end_date} {end_time}"
+            payload["timeZone"] = draft.timezone.value or "UTC"
 
         attendees = []
         for att in draft.required_attendees:

@@ -203,23 +203,19 @@ def validate_payload(payload: dict) -> list[str]:
     errors = []
     if not payload.get("subject"):
         errors.append("subject is required")
-
-    start = payload.get("start", {})
-    if not start.get("dateTime"):
-        errors.append("start.dateTime is required")
-    if not start.get("timeZone"):
-        errors.append("start.timeZone is required")
-
-    end = payload.get("end", {})
-    if not end.get("dateTime"):
-        errors.append("end.dateTime is required")
+    if not payload.get("start"):
+        errors.append("start is required")
+    if not payload.get("end"):
+        errors.append("end is required")
 
     try:
-        start_dt = dt.datetime.fromisoformat(start["dateTime"])
-        end_dt = dt.datetime.fromisoformat(end["dateTime"])
+        start_str = str(payload["start"]).replace("T", " ")
+        end_str = str(payload["end"]).replace("T", " ")
+        start_dt = dt.datetime.strptime(start_str, "%Y-%m-%d %H:%M")
+        end_dt = dt.datetime.strptime(end_str, "%Y-%m-%d %H:%M")
         if end_dt <= start_dt:
             errors.append("end must be after start")
     except (ValueError, TypeError, KeyError):
-        pass
+        errors.append("Invalid start/end format")
 
     return errors
