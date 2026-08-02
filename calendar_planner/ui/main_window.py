@@ -717,10 +717,11 @@ class MainWindow:
 
         stage = self.controller.current_stage
 
+        self.main_label.pack_forget()
+        self.info_text.pack_forget()
+
         if stage == 0:
             self._show_stage_1_content()
-
-        self.info_text.pack_forget()
 
         if stage == 1:
             self._show_stage_2_content()
