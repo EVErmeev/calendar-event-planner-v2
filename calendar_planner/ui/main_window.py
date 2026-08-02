@@ -741,7 +741,14 @@ class MainWindow:
 
     def _show_stage_1_content(self) -> None:
         from calendar_planner.ui.stages.stage1_connections import Stage1ConnectionsFrame
-        frame = Stage1ConnectionsFrame(self.content_frame, container=self.container)
+        def on_check(ready):
+            if ready:
+                self.controller.set_stage_success("stage_1")
+            else:
+                self.controller.set_stage_error("stage_1", "Не все компоненты готовы")
+            self._update_stage_indicators()
+            self._update_bottom_buttons()
+        frame = Stage1ConnectionsFrame(self.content_frame, container=self.container, on_check_done=on_check)
         frame.pack(fill=tk.BOTH, expand=True)
         self._stage_frames[0] = frame
 

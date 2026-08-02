@@ -5,10 +5,11 @@ from tkinter import ttk
 
 
 class Stage1ConnectionsFrame(ttk.Frame):
-    def __init__(self, parent, container=None, **kwargs):
+    def __init__(self, parent, container=None, on_check_done=None, **kwargs):
         super().__init__(parent, **kwargs)
         self.container = container
         self._cred_provider = container.credential_provider if container else None
+        self._on_check_done = on_check_done
         self._detected_config: dict = {}
         self._last_results: list[dict] = []
         self._ready = False
@@ -134,10 +135,10 @@ class Stage1ConnectionsFrame(ttk.Frame):
                 self._find_tool_var.set(config["calendar_find_tool"])
                 self._create_tool_var.set(config["calendar_create_tool"])
                 self._log("Exchange MCP найден.")
-                self._log(f"  Транспорт: {config['transport']}, tools: {len(config['tools'])}")
-                self._log("  Каталог сотрудников: Exchange EWS GAL (ResolveNames). search_emails не используется.")
+                self._status_var.set("Exchange MCP найден. Нажмите «Проверить подключения»")
             else:
                 self._log("Exchange MCP не найден.")
+                self._status_var.set("MCP не найден. Проверьте установку Exchange MCP.")
         except Exception as e:
             self._log(f"Ошибка: {e}")
 
@@ -234,20 +235,8 @@ class Stage1ConnectionsFrame(ttk.Frame):
         ready = result.get("ready_for_analysis", False)
         self._display_results(result.get("results", []), ready)
 
-        # Update MainWindow's controller so bottom button appears
-        try:
-            mw = self.winfo_toplevel()
-            if hasattr(mw, 'controller'):
-                if ready:
-                    mw.controller.set_stage_success("stage_1")
-                else:
-                    mw.controller.set_stage_error("stage_1", "Не все компоненты готовы")
-                if hasattr(mw, '_update_bottom_buttons'):
-                    mw._update_bottom_buttons()
-                if hasattr(mw, '_update_stage_indicators'):
-                    mw._update_stage_indicators()
-        except Exception:
-            pass
+        if self._on_check_done:
+            self._on_check_done(ready)
 
     def _display_results(self, results, ready):
         self._last_results = results
