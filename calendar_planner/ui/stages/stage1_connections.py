@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tkinter as tk
+from pathlib import Path
 from tkinter import ttk
 
 
@@ -25,15 +26,9 @@ class Stage1ConnectionsFrame(ttk.Frame):
                 if creds.available:
                     self._cred_provider.set_session_credentials(creds.username, creds.password)
                     self._saved_login = creds.username or self._saved_login
-                    self._saved_pass_status = "загружен"
+                    self._saved_pass_status = "загружен из Credential Manager"
                 else:
-                    # Try .env password as last fallback
-                    env_pass = os.environ.get("EWS_PASSWORD", "")
-                    if env_pass:
-                        self._cred_provider.set_session_credentials(self._saved_login, env_pass)
-                        self._saved_pass_status = "загружен из .env"
-                    else:
-                        self._saved_pass_status = "не задан"
+                    self._saved_pass_status = "не задан"
         else:
             self._saved_pass_status = "не задан"
         self._saved_ready = False
@@ -111,6 +106,9 @@ class Stage1ConnectionsFrame(ttk.Frame):
         self._ews_pass_status_var = tk.StringVar(value=self._saved_pass_status)
         ttk.Label(row, textvariable=self._ews_pass_status_var, font=("", 7), foreground="gray").pack(side=tk.LEFT, padx=5)
         row = ttk.Frame(ews_frame); row.pack(fill=tk.X, pady=2)
+        self._ews_remember_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(row, text="Запомнить пароль на этом компьютере", variable=self._ews_remember_var).pack(side=tk.LEFT)
+        row = ttk.Frame(ews_frame); row.pack(fill=tk.X, pady=2)
         ttk.Label(row, text="Тестовое ФИО:", width=15).pack(side=tk.LEFT)
         self._ews_probe_var = tk.StringVar(value="Ермеев Егор")
         ttk.Entry(row, textvariable=self._ews_probe_var, width=25).pack(side=tk.LEFT, padx=5)
@@ -157,20 +155,24 @@ class Stage1ConnectionsFrame(ttk.Frame):
 
         if password and self._cred_provider:
             self._cred_provider.set_session_credentials(login, password)
-            self._ews_pass_status_var.set("сохранён в сессии")
+            if self._ews_remember_var.get():
+                self._cred_provider.save_to_credential_manager(login, password)
+                self._ews_pass_status_var.set("сохранён в Credential Manager")
+            else:
+                self._ews_pass_status_var.set("сохранён в сессии")
             self._ews_pass_var.set("")
 
-        # Save to .env with password
+        # Save endpoint/login to .env (NEVER password)
         env_file = Path(__file__).parent.parent.parent.parent / ".env"
         if env_file.exists():
             lines = env_file.read_text(encoding="utf-8").split("\n")
             updates = {"EWS_ENDPOINT": endpoint, "EWS_USERNAME": login}
-            if password:
-                updates["EWS_PASSWORD"] = password
-            replaced = set()
             out_lines = []
+            replaced = set()
             for line in lines:
                 key = line.split("=")[0].strip() if "=" in line else ""
+                if key == "EWS_PASSWORD":
+                    continue  # Remove any old password
                 if key in updates:
                     out_lines.append(f"{key}={updates[key]}")
                     replaced.add(key)
@@ -181,7 +183,7 @@ class Stage1ConnectionsFrame(ttk.Frame):
                     out_lines.append(f"{key}={val}")
             env_file.write_text("\n".join(out_lines), encoding="utf-8")
 
-        self._log(f"EWS saved. Login: {login}.")
+        self._log(f"EWS сохранён. Логин: {login}.")
 
     def _clear_ews(self):
         self._ews_login_var.set("")
