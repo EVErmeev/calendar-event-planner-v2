@@ -146,7 +146,6 @@ class MainWindow:
         self._bottom_primary_btn.pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Запустить анализ", command=self._run_analysis).pack(side=tk.LEFT, padx=10)
         ttk.Button(bottom, text="Подключения", command=self._show_stage_1).pack(side=tk.LEFT, padx=2)
-        ttk.Button(bottom, text="Проверить подключения", command=self._check_connections).pack(side=tk.LEFT, padx=2)
         ttk.Button(bottom, text="Сохранить сессию", command=self._save_session).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bottom, text="Копировать", command=self._copy_results).pack(side=tk.RIGHT, padx=2)
 
@@ -695,10 +694,7 @@ class MainWindow:
 
         self.info_text.pack_forget()
 
-        if stage == 0:
-            self.info_text.pack(fill=tk.X, pady=5)
-
-        elif stage == 1:
+        if stage == 1:
             self._show_stage_2_content()
 
         elif stage == 2:
@@ -997,9 +993,8 @@ class MainWindow:
             self.controller.set_stage_success("stage_1")
             self.info_text.insert(tk.END, "ИТОГ: Подключения готовы к анализу\n")
         else:
-            self.controller.set_stage_success("stage_1")
-            self.controller.stages[0].status = StageStatus.SUCCESS_WITH_WARNINGS
-            self.info_text.insert(tk.END, "ИТОГ: Подключения работают с предупреждениями\n")
+            self.controller.set_stage_error("stage_1", "Не все обязательные компоненты готовы")
+            self.info_text.insert(tk.END, "ИТОГ: Не все компоненты готовы к анализу\n")
 
         self._update_stage_indicators()
         self._update_bottom_buttons()

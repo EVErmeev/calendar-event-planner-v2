@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from calendar_planner.app.credential_provider import CredentialProvider
 from calendar_planner.app.mcp_transport import MCPTransport
 from calendar_planner.app.stdio_mcp_transport import StdioMCPTransport
 from calendar_planner.calendar.mcp_gateway import MCPCalendarGateway
@@ -20,6 +21,7 @@ class AppContainer:
         self._mcp_initialized = False
         self._mcp_disabled_or_unavailable = False
         self._init_warnings: list[str] = []
+        self.credential_provider = CredentialProvider()
 
     @property
     def _is_test_env(self) -> bool:
@@ -96,45 +98,40 @@ class AppContainer:
         if self._directory_gateway is not None:
             return self._directory_gateway
 
-        # Test env always uses fixture regardless of EWS settings
-        if self._is_test_env:
-            from calendar_planner.participants.directory_gateway import FixtureDirectoryGateway
-            self._init_warnings.append("Using FixtureDirectoryGateway (test env)")
-            return FixtureDirectoryGateway()
-
-        if self.settings.EWS_ENDPOINT:
-            from calendar_planner.app.credential_provider import CredentialProvider
-            from calendar_planner.participants.ews_directory_gateway import (
-                EWSDirectoryGateway,
-            )
-            cred_provider = CredentialProvider()
-
-            if self.settings.EWS_PASSWORD:
-                cred_provider.set_session_credentials(
-                    self.settings.EWS_USERNAME, self.settings.EWS_PASSWORD
-                )
-
-            creds = cred_provider.get_credentials()
-            self._directory_gateway = EWSDirectoryGateway(
-                endpoint=self.settings.EWS_ENDPOINT,
-                username=creds.username if creds.available else (self.settings.EWS_USERNAME or ""),
-                password=creds.password if creds.available else "",
-            )
-            return self._directory_gateway
-
+        # Test env always uses fixture
         if self._is_test_env:
             from calendar_planner.participants.directory_gateway import (
                 FixtureDirectoryGateway,
             )
-            self._init_warnings.append("Using FixtureDirectoryGateway (test env)")
-            return FixtureDirectoryGateway()
+            self._directory_gateway = FixtureDirectoryGateway()
+            return self._directory_gateway
 
-        # EWS not configured — create gateway that reports unavailable
+        endpoint = self.settings.EWS_ENDPOINT or ""
+        creds = self.credential_provider.get_credentials()
+
         from calendar_planner.participants.ews_directory_gateway import (
             EWSDirectoryGateway,
         )
-        self._directory_gateway = EWSDirectoryGateway(endpoint="", username="", password="")
-        self._init_warnings.append("EWS directory not configured")
+        self._directory_gateway = EWSDirectoryGateway(
+            endpoint=endpoint,
+            username=creds.username if creds.available else (self.settings.EWS_USERNAME or ""),
+            password=creds.password if creds.available else "",
+        )
+        return self._directory_gateway
+
+    def configure_ews(self, endpoint: str, username: str, password: str | None) -> None:
+        """Configure EWS and reset cached gateway. Password stored in session only."""
+        import os
+        if endpoint:
+            os.environ["EWS_ENDPOINT"] = endpoint
+        if username:
+            os.environ["EWS_USERNAME"] = username
+        if password:
+            self.credential_provider.set_session_credentials(username, password)
+        self._directory_gateway = None
+
+    def reset_directory_gateway(self) -> None:
+        self._directory_gateway = None
         return self._directory_gateway
 
     def check_all_connections(self) -> dict:

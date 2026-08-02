@@ -5727,7 +5727,9 @@ class TestAppContainerDirectoryGateway:
         container = AppContainer(s)
 
         gw = container.get_directory_gateway()
-        from calendar_planner.participants.ews_directory_gateway import EWSDirectoryGateway
+        from calendar_planner.participants.ews_directory_gateway import (
+            EWSDirectoryGateway,
+        )
         assert isinstance(gw, EWSDirectoryGateway)
         assert not gw.is_available()  # No credentials configured
 

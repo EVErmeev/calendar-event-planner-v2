@@ -393,7 +393,9 @@ class TestContainerFixturePolicy:
         with pytest.raises(RuntimeError, match="MCP not available"):
             container.get_calendar_gateway()
 
-        from calendar_planner.participants.ews_directory_gateway import EWSDirectoryGateway
+        from calendar_planner.participants.ews_directory_gateway import (
+            EWSDirectoryGateway,
+        )
         gw = container.get_directory_gateway()
         assert isinstance(gw, EWSDirectoryGateway)
 
@@ -413,7 +415,9 @@ class TestContainerFixturePolicy:
         with pytest.raises(RuntimeError, match="MCP not available"):
             container.get_calendar_gateway()
 
-        from calendar_planner.participants.ews_directory_gateway import EWSDirectoryGateway
+        from calendar_planner.participants.ews_directory_gateway import (
+            EWSDirectoryGateway,
+        )
         gw = container.get_directory_gateway()
         assert isinstance(gw, EWSDirectoryGateway)
 
