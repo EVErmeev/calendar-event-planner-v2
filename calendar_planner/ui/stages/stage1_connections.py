@@ -250,6 +250,8 @@ class Stage1ConnectionsFrame(ttk.Frame):
             return
         self._log("Проверка подключений...")
 
+        import os
+
         # Inject session credentials into container before check
         login = self._ews_login_var.get().strip()
         password = self._ews_pass_var.get().strip()
@@ -258,7 +260,6 @@ class Stage1ConnectionsFrame(ttk.Frame):
             if creds.available:
                 password = creds.password
         if login and password:
-            import os
             os.environ["EWS_USERNAME"] = login
             os.environ["EWS_PASSWORD"] = password
 
