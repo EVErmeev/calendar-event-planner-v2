@@ -48,5 +48,5 @@ class TestCredentialProvider:
 
     def test_credential_manager_not_available_without_windows(self):
         cp = CredentialProvider()
-        result = cp._read_from_credential_manager()
+        result = cp.load_persistent("unknown_user")
         assert not result.available

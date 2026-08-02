@@ -1037,9 +1037,9 @@ class TestEventCreator:
 
         payload = creator.build_payload(draft)
         assert payload["subject"] == "Демонстрация процессов: Управление производством"
-        assert payload["start"] == "2026-08-04 12:00"
-        assert payload["end"] == "2026-08-04 13:00"
-        assert len(payload["attendees"]) == 1
+        assert payload["start"]["dateTime"] == "2026-08-04T12:00:00"
+        assert payload["end"]["dateTime"] == "2026-08-04T13:00:00"
+        assert len(payload.get("attendees", [])) == 1
 
     def test_create_one_dry_run(self):
         from calendar_planner.calendar.creator import EventCreator
@@ -5517,7 +5517,7 @@ class TestCreatorCoverageComplete:
         types = [a["type"] for a in payload["attendees"]]
         assert "required" in types
         assert "optional" in types
-        emails = [a["email"] for a in payload["attendees"]]
+        emails = [a["emailAddress"]["address"] for a in payload["attendees"]]
         assert "req@example.com" in emails
         assert "opt@example.com" in emails
 
@@ -5543,8 +5543,8 @@ class TestCreatorCoverageComplete:
 
         payload = creator.build_payload(draft)
         assert payload["subject"] == "All Day Event"
-        assert payload["start"] == "2026-08-04"
-        assert payload["end"] == "2026-08-04"
+        assert payload["start"]["date"] == "2026-08-04"
+        assert payload["end"]["date"] == "2026-08-04"
         assert payload["is_all_day"] is True
 
     def test_get_all_results_accumulates(self):
@@ -5606,14 +5606,14 @@ class TestCreatorCoverageComplete:
 
         errors2 = creator.validate_payload({
             "subject": "Test",
-            "start": "2026-08-04 12:00",
+            "start": {"dateTime": "2026-08-04T12:00:00", "timeZone": "UTC"},
         })
         assert any("end" in e for e in errors2)
 
         errors3 = creator.validate_payload({
             "subject": "Test",
-            "start": "2026-08-04 12:00",
-            "end": "2026-08-04 11:00",
+            "start": {"dateTime": "2026-08-04T12:00:00", "timeZone": "UTC"},
+            "end": {"dateTime": "2026-08-04T11:00:00", "timeZone": "UTC"},
         })
         assert any("end must be after start" in e for e in errors3)
 

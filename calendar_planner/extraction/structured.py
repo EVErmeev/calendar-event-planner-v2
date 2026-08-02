@@ -162,6 +162,9 @@ class StructuredExtractor:
         m = re.match(r"^(\d+)\s*час(?:а|ов)?$", cleaned, re.IGNORECASE)
         if m:
             return int(m.group(1)) * 60
+        m = re.match(r"^(\d+):(\d{2}):(\d{2})$", cleaned)
+        if m:
+            return int(m.group(1)) * 60 + int(m.group(2))
         m = re.match(r"^(\d+):(\d{2})$", cleaned)
         if m:
             return int(m.group(1)) * 60 + int(m.group(2))

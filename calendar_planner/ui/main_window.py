@@ -948,11 +948,11 @@ class MainWindow:
                 "Подтверждение создания — предпросмотр",
                 f"Будет создано реальное календарное событие:\n\n"
                 f"Тема: {payload.get('subject', '—')}\n"
-                f"Начало: {payload.get('start', '—')}\n"
-                f"Окончание: {payload.get('end', '—')}\n"
+                f"Начало: {(payload.get('start', {}) or {}).get('dateTime', '—')}\n"
+                f"Окончание: {(payload.get('end', {}) or {}).get('dateTime', '—')}\n"
                 f"Участников: {len(payload.get('attendees', []))}\n"
-                f"Место: {payload.get('location', '—')}\n"
-                f"Ссылка: {payload.get('online_meeting_url', '—')}\n\n"
+                f"Место: {(payload.get('location', {}) or {}).get('displayName', '—')}\n"
+                f"Ссылка: {payload.get('onlineMeetingUrl', '—')}\n\n"
                 f"--- JSON payload ---\n{payload_preview}\n\n"
                 f"Создать событие?",
             ):

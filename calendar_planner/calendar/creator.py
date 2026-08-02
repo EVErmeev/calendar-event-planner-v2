@@ -15,38 +15,68 @@ class EventCreator:
     def build_payload(self, draft: FinalEventDraft) -> dict:
         payload: dict[str, Any] = {
             "subject": draft.subject.value or "",
-            "start": f"{draft.start_date.value} {draft.start_time.value}",
+            "start": {
+                "dateTime": f"{draft.start_date.value}T{draft.start_time.value}:00",
+                "timeZone": draft.timezone.value or "UTC",
+            },
         }
 
         if draft.is_all_day:
-            payload["start"] = draft.start_date.value
-            payload["end"] = draft.start_date.value
+            payload["start"] = {"date": draft.start_date.value, "timeZone": draft.timezone.value or "UTC"}
+            payload["end"] = {"date": draft.start_date.value, "timeZone": draft.timezone.value or "UTC"}
             payload["is_all_day"] = True
         else:
             end_date, end_time = draft.compute_end_datetime()
             if end_date and end_time:
-                payload["end"] = f"{end_date} {end_time}"
-            payload["timeZone"] = draft.timezone.value or "UTC"
-
-        if draft.location.value:
-            payload["location"] = draft.location.value
-        if draft.online_meeting_url.value:
-            payload["online_meeting_url"] = draft.online_meeting_url.value
+                payload["end"] = {
+                    "dateTime": f"{end_date}T{end_time}:00",
+                    "timeZone": draft.timezone.value or "UTC",
+                }
 
         attendees = []
         for att in draft.required_attendees:
             if att.email:
-                attendees.append(att.email)
+                attendees.append({"emailAddress": {"address": att.email, "name": att.full_name}, "type": "required"})
         for att in draft.optional_attendees:
             if att.email:
-                attendees.append(att.email)
+                attendees.append({"emailAddress": {"address": att.email, "name": att.full_name}, "type": "optional"})
         if attendees:
-            payload["attendees"] = ",".join(attendees)
+            payload["attendees"] = attendees
 
+        if draft.location.value:
+            payload["location"] = {"displayName": draft.location.value}
+        if draft.online_meeting_url.value:
+            payload["onlineMeetingUrl"] = draft.online_meeting_url.value
         if draft.description.value:
-            payload["body"] = draft.description.value
+            payload["body"] = {"contentType": "text", "content": draft.description.value}
 
         return payload
+
+    @staticmethod
+    def adapt_for_mcp(payload: dict) -> dict:
+        """Convert canonical payload to Exchange MCP flat format."""
+        mcp = {"subject": payload.get("subject", "")}
+        start = payload.get("start", {})
+        if isinstance(start, dict):
+            dt = start.get("dateTime", "")
+            if dt:
+                mcp["start"] = dt.replace("T", " ")[:16]
+        end = payload.get("end", {})
+        if isinstance(end, dict):
+            dt = end.get("dateTime", "")
+            if dt:
+                mcp["end"] = dt.replace("T", " ")[:16]
+        atts = payload.get("attendees", [])
+        if atts:
+            emails = [a.get("emailAddress", {}).get("address", "") for a in atts if isinstance(a, dict)]
+            mcp["attendees"] = ",".join(filter(None, emails))
+        loc = payload.get("location", {})
+        if isinstance(loc, dict) and loc.get("displayName"):
+            mcp["location"] = loc["displayName"]
+        body = payload.get("body", {})
+        if isinstance(body, dict) and body.get("content"):
+            mcp["body"] = body["content"]
+        return mcp
 
     def create_one(self, draft: FinalEventDraft) -> dict:
         draft_errors = self.validate_draft_before_create(draft)

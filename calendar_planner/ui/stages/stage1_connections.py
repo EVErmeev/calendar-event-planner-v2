@@ -23,10 +23,8 @@ class Stage1ConnectionsFrame(ttk.Frame):
             if self._cred_provider.has_session_credentials():
                 self._saved_pass_status = "сохранён в сессии"
             else:
-                creds = self._cred_provider.get_credentials()
+                creds = self._cred_provider.load_persistent(self._saved_login)
                 if creds.available:
-                    self._cred_provider.set_session_credentials(creds.username, creds.password)
-                    self._saved_login = creds.username or self._saved_login
                     self._saved_pass_status = "загружен из Credential Manager"
                 else:
                     self._saved_pass_status = "не задан"
@@ -176,8 +174,11 @@ class Stage1ConnectionsFrame(ttk.Frame):
         if password and self._cred_provider:
             self._cred_provider.set_session_credentials(login, password)
             if self._ews_remember_var.get():
-                self._cred_provider.save_to_credential_manager(login, password)
-                self._ews_pass_status_var.set("сохранён в Credential Manager")
+                result = self._cred_provider.save_persistent(login, password)
+                if result.success:
+                    self._ews_pass_status_var.set("сохранён в Credential Manager")
+                else:
+                    self._ews_pass_status_var.set(f"ошибка сохранения: {result.safe_message[:50]}")
             else:
                 self._ews_pass_status_var.set("сохранён в сессии")
             self._ews_pass_var.set("")
@@ -206,11 +207,14 @@ class Stage1ConnectionsFrame(ttk.Frame):
         self._log(f"EWS сохранён. Логин: {login}.")
 
     def _clear_ews(self):
+        login = self._ews_login_var.get().strip()
         self._ews_login_var.set("")
         self._ews_pass_var.set("")
         self._ews_pass_status_var.set("не задан")
         if self._cred_provider:
             self._cred_provider.clear_session_credentials()
+            if login:
+                self._cred_provider.delete_persistent(login)
         if self.container:
             self.container.reset_directory_gateway()
         self._log("EWS credentials очищены.")

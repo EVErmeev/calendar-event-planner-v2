@@ -202,7 +202,9 @@ class MCPCalendarGateway:
                 "payload": payload,
             }
 
-        result = self._mcp_call(self._create_tool, payload)
+        from calendar_planner.calendar.creator import EventCreator
+        mcp_payload = EventCreator.adapt_for_mcp(payload)
+        result = self._mcp_call(self._create_tool, mcp_payload)
         result_text = str(result)
         if isinstance(result, str) and "Событие создано" in result_text:
             return {
