@@ -175,7 +175,9 @@ class AppContainer:
             if "ews" in dir_cap.lower() and directory_gw.is_available():
                 # Probe real EWS ResolveNames
                 try:
-                    probe_result = directory_gw.search("calendar-planner-health-check")
+                    # Use last user probe query or the username as probe
+                    probe_query = self.settings.EWS_USERNAME or "calendar-planner-probe"
+                    probe_result = directory_gw.search(probe_query)
                     probe_status = probe_result.status if isinstance(probe_result, object) and hasattr(probe_result, "status") else "ok"
                     if probe_status in ("success", "ambiguous", "not_found"):
                         results.append({

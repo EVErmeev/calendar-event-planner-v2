@@ -165,17 +165,63 @@ class EWSDirectoryGateway:
         ns = {
             "t": "http://schemas.microsoft.com/exchange/services/2006/types",
             "m": "http://schemas.microsoft.com/exchange/services/2006/messages",
+            "soap": "http://schemas.xmlsoap.org/soap/envelope/",
         }
 
+        # Check for SOAP Fault first
+        soap_fault = root.find(".//soap:Fault", ns)
+        if soap_fault is not None:
+            faultcode = _deep_get_text(soap_fault, "faultcode", ns)
+            faultstring = _deep_get_text(soap_fault, "faultstring", ns)
+            logger.warning("EWSDirectoryGateway: SOAP Fault: %s — %s", faultcode, faultstring)
+            base.status = "failed"
+            base.error_code = f"SOAP_FAULT:{faultcode}"
+            base.error_message = faultstring or "SOAP fault"
+            return base
+
+        # Parse ResponseMessage for ResponseClass/ResponseCode
+        resp_msg = root.find(".//m:ResolveNamesResponseMessage", ns)
+        response_class = _get_attr(resp_msg, "ResponseClass") if resp_msg is not None else ""
+        response_code = _deep_get_text(resp_msg, "m:ResponseCode", ns) if resp_msg is not None else ""
+        message_text = _deep_get_text(resp_msg, "m:MessageText", ns) if resp_msg is not None else ""
+
+        # Check for known service codes that confirm availability
+        if response_code == "ErrorNameResolutionNoResults":
+            base.status = "not_found"
+            base.error_code = response_code
+            base.error_message = message_text or "No results found"
+            logger.info("EWSDirectoryGateway: no results (ErrorNameResolutionNoResults), service is available")
+            return base
+
+        if response_code in ("ErrorAccessDenied",):
+            base.status = "forbidden"
+            base.error_code = response_code
+            base.error_message = message_text or "Access denied"
+            return base
+
+        if response_code in ("ErrorServerBusy", "ErrorTimeoutExpired"):
+            base.status = "unavailable"
+            base.error_code = response_code
+            base.error_message = message_text or f"EWS error: {response_code}"
+            return base
+
+        if response_code.startswith("Error") and response_code != "NoError":
+            base.status = "failed"
+            base.error_code = response_code
+            base.error_message = message_text or f"EWS error: {response_code}"
+            return base
+
+        # Look for ResolutionSet (NoError or Success)
         resolution_set = root.find(".//m:ResolutionSet", ns)
         if resolution_set is None:
-            logger.warning(
-                "EWSDirectoryGateway: no m:ResolutionSet in SOAP response",
-                extra={"correlation_id": correlation_id},
-            )
+            if response_class == "Success" and response_code == "NoError":
+                base.status = "not_found"
+                base.error_code = "EMPTY_RESOLUTION_SET"
+                base.error_message = "No ResolutionSet but response is successful"
+                return base
             base.status = "failed"
-            base.error_message = "No ResolutionSet in response"
-            base.error_code = "NO_RESOLUTION_SET"
+            base.error_code = response_code or "NO_RESOLUTION_SET"
+            base.error_message = message_text or "No ResolutionSet in response"
             return base
 
         resolution_entries = resolution_set.findall("t:Resolution", ns)
@@ -233,6 +279,12 @@ class EWSDirectoryGateway:
 def _deep_get_text(element, xpath: str, ns) -> str:
     child = element.find(xpath, ns)
     return child.text if child is not None and child.text is not None else ""
+
+
+def _get_attr(element, attr_name: str) -> str:
+    if element is None:
+        return ""
+    return element.get(attr_name, "")
 
 
 def _escape_xml(value: str) -> str:
