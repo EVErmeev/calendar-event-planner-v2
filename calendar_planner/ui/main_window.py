@@ -140,12 +140,8 @@ class MainWindow:
         bottom = ttk.Frame(self.root, padding=5)
         bottom.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=5)
 
-        self._bottom_left_btns = ttk.Frame(bottom)
-        self._bottom_left_btns.pack(side=tk.LEFT)
-
         self._bottom_primary_btn = ttk.Button(bottom, text="Проверить подключения", command=self._primary_action)
-        self._bottom_primary_btn.pack(side=tk.LEFT, padx=(20, 2))
-        ttk.Button(bottom, text="Запустить анализ", command=self._run_analysis).pack(side=tk.LEFT, padx=2)
+        self._bottom_primary_btn.pack(side=tk.LEFT, padx=2)
 
         ttk.Button(bottom, text="Сохранить сессию", command=self._save_session).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bottom, text="Копировать", command=self._copy_results).pack(side=tk.RIGHT, padx=2)
@@ -601,6 +597,7 @@ class MainWindow:
 
         if stage == 0 and status == "not_started":
             self._check_connections()
+            self.controller.set_current_stage(0)
             self._update_stage_indicators()
             self._update_bottom_buttons()
             self._show_stage_content()
@@ -642,14 +639,15 @@ class MainWindow:
             (0, "not_started"): "Проверить подключения",
             (0, "failed"): "Проверить подключения",
             (0, "success"): "Запустить анализ",
+            (0, "success_with_warnings"): "Запустить анализ",
             (1, "success"): "Сравнить с календарём →",
             (1, "success_with_warnings"): "Сравнить с календарём →",
             (2, "success"): "Определить участников →",
             (2, "success_with_warnings"): "Определить участников →",
             (3, "success"): "Собрать дополнительные данные →",
             (3, "success_with_warnings"): "Собрать дополнительные данные →",
-            (4, "success"): "Сформировать карточки событий →",
-            (4, "success_with_warnings"): "Сформировать карточки событий →",
+            (4, "success"): "Сформировать карточки →",
+            (4, "success_with_warnings"): "Сформировать карточки →",
             (5, "success"): "Завершить",
             (5, "success_with_warnings"): "Завершить",
         }
