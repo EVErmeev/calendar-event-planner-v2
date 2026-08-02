@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from calendar_planner.domain.models import FinalEventDraft
+from calendar_planner.domain.validation import preflight_validate
 from calendar_planner.ui.event_editor import EventEditorFrame
 
 
@@ -51,6 +52,7 @@ class Stage6CreationFrame(ttk.Frame):
         self._build_draft_list(self._left_scrollable)
 
         self._right_frame = ttk.Frame(paned)
+        self._right_frame.pack_propagate(False)
         paned.add(self._right_frame, weight=2)
 
         no_draft_label = ttk.Label(
@@ -97,9 +99,13 @@ class Stage6CreationFrame(ttk.Frame):
         date_info = f"{draft.start_date.value or '?'} {draft.start_time.value or ''}"
         ttk.Label(info_frame, text=date_info, font=("", 7)).pack(anchor=tk.W)
 
-        status_text = "Готов" if draft.is_ready else "Не готов"
-        status_color = "green" if draft.is_ready else "orange"
-        ttk.Label(info_frame, text=status_text, foreground=status_color, font=("", 7)).pack(anchor=tk.W)
+        preflight = preflight_validate(draft)
+        draft.is_ready = preflight.ready
+        if preflight.ready:
+            ttk.Label(info_frame, text="Готово", foreground="green", font=("", 7)).pack(anchor=tk.W)
+        else:
+            errors_short = ", ".join(e["message_ru"][:40] for e in preflight.blocking_errors[:2])
+            ttk.Label(info_frame, text=errors_short or "Не готово", foreground="red", font=("", 7), wraplength=300).pack(anchor=tk.W)
 
     def _on_draft_click(self, draft: FinalEventDraft) -> None:
         self._current_draft = draft
