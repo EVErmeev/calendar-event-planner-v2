@@ -102,3 +102,47 @@ class CredentialProvider:
         except Exception:
             logger.debug("keyring load failed", exc_info=True)
         return CredentialResult(available=False)
+
+    def read_after_write(self, username: str, expected: str) -> bool:
+        """Read back a persisted credential in the same process and compare in memory."""
+        try:
+            import keyring
+            stored = keyring.get_password(SERVICE_NAME, username)
+            return stored == expected
+        except Exception:
+            logger.debug("read-after-write failed", exc_info=True)
+            return False
+
+
+def ews_save_decision(remember: bool, save_result: CredentialOperationResult | None) -> dict:
+    """Decide UI behaviour after an EWS save attempt (pure, tkinter-free).
+
+    Returns a dict consumed by the UI:
+      apply_mask / clear_field / checkbox / status / success / error_code
+    """
+    if remember:
+        if save_result is not None and save_result.success:
+            return {
+                "apply_mask": True,
+                "clear_field": False,
+                "checkbox": True,
+                "success": True,
+                "status": "сохранён в Windows Credential Manager",
+            }
+        error_code = (save_result.error_code if save_result is not None else None) or "SAVE_ERROR"
+        return {
+            "apply_mask": False,
+            "clear_field": False,
+            "checkbox": True,
+            "success": False,
+            "error_code": error_code,
+            "status": f"ошибка сохранения ({error_code})",
+        }
+    return {
+        "apply_mask": True,
+        "clear_field": False,
+        "checkbox": False,
+        "success": True,
+        "session_only": True,
+        "status": "Пароль сохранён только до закрытия приложения",
+    }

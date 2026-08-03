@@ -20,6 +20,7 @@ dependencies = [
     "tzdata>=2024.1",
     "requests>=2.31.0",
     "requests-ntlm>=1.2.0",
+    "keyring>=25.0.0",
 ]
 
 [project.optional-dependencies]
