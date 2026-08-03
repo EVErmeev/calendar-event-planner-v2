@@ -372,6 +372,51 @@ class TestEWSPersistence:
 
 
 # ---------------------------------------------------------------------------
+# Placeholder date/time values (Stage 3 regression)
+# ---------------------------------------------------------------------------
+
+class TestPlaceholderDateTimes:
+    def test_normalize_date_placeholder_returns_none(self):
+        from calendar_planner.extraction.datetime_normalizer import normalize_date_value
+        for v in ("-", "- -", "—", "–", "/", "н/д", "   "):
+            assert normalize_date_value(v) is None
+
+    def test_normalize_time_placeholder_returns_none(self):
+        from calendar_planner.extraction.datetime_normalizer import normalize_time_value
+        for v in ("-", "- -", "—", "–", "н/д"):
+            assert normalize_time_value(v) is None
+
+    def test_normalize_real_values_kept(self):
+        from calendar_planner.extraction.datetime_normalizer import (
+            normalize_date_value,
+            normalize_time_value,
+        )
+        assert normalize_date_value("31.07.2026") == "2026-07-31"
+        assert normalize_time_value("10:00") == "10:00"
+
+    def test_extractor_skips_dash_rows_without_crash(self):
+        from calendar_planner.domain.enums import MeetingDatePolicy
+        from calendar_planner.domain.models import ExtractedSource, SourceReference
+        from calendar_planner.extraction.structured import StructuredExtractor
+
+        sheet = [
+            ["№ 1", "Тема", "Согласованная дата", "Согласованное время"],
+            ["1", "Обычная", "31.07.2026", "10:00"],
+            ["2", "С прочерками", "-", "-"],
+            ["3", "Ещё прочерк", "–", "—"],
+        ]
+        src = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={"План": sheet},
+        )
+        ex = StructuredExtractor(date_policy=MeetingDatePolicy.AGREED_ONLY)
+        res = ex.extract(src)
+        candidates = res.get("План", [])
+        assert len(candidates) == 1
+        assert candidates[0].start_date == "2026-07-31"
+
+
+# ---------------------------------------------------------------------------
 # Packaging / launcher
 # ---------------------------------------------------------------------------
 
