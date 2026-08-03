@@ -206,17 +206,58 @@ class MCPCalendarGateway:
         from calendar_planner.calendar.creator import EventCreator
         mcp_payload = EventCreator.adapt_for_mcp(payload)
         result = self._mcp_call(self._create_tool, mcp_payload)
-        result_text = str(result)
-        if isinstance(result, str) and "Событие создано" in result_text:
+        return self._interpret_create_result(result, payload)
+
+    @staticmethod
+    def _success_markers() -> tuple[str, ...]:
+        return (
+            "событие создано", "создано успешно", "встреча создана",
+            "created", "event created", "запись создана", "saved",
+        )
+
+    @staticmethod
+    def _failure_markers() -> tuple[str, ...]:
+        return (
+            "ошибк", "не удалось", "не смог", "failed", "error",
+            "отказано", "forbidden", "rejected", "нельзя", "недоступн",
+        )
+
+    def _interpret_create_result(self, result, payload: dict) -> dict:
+        """Report the real outcome instead of assuming success.
+
+        The Exchange MCP returns human-readable text; only a dict carrying an
+        event id, or text signalling success, counts as created. Anything that
+        looks like an error is surfaced as ``failed`` with the server message.
+        """
+        if isinstance(result, dict):
+            if result.get("id") or result.get("event_id") or result.get("iCalUid"):
+                return {"status": "created", "message": "Event created", "result": result, "payload": payload}
+            text = str(result)
+        else:
+            text = str(result)
+
+        low = text.lower()
+        if any(m in low for m in self._success_markers()):
             return {
                 "status": "created",
-                "message": "Event created",
-                "result": result_text.split("\n")[0],
+                "message": text.splitlines()[0] if text.strip() else "Event created",
+                "result": result,
                 "payload": payload,
             }
+        if any(m in low for m in self._failure_markers()):
+            return {
+                "status": "failed",
+                "error": "CREATE_REJECTED",
+                "message": text.strip()[:300] or "Event creation rejected by server",
+                "result": result,
+                "payload": payload,
+            }
+        # Unknown response — do not claim success.
         return {
-            "status": "created",
-            "message": "Event created",
+            "status": "failed",
+            "error": "UNKNOWN_RESPONSE",
+            "message": "Не удалось подтвердить создание события. Ответ сервера: "
+                       + (text[:200] if text.strip() else "<пусто>"),
             "result": result,
             "payload": payload,
         }

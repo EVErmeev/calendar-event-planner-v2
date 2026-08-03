@@ -109,7 +109,10 @@ class StructuredExtractor:
 
         if detector.duration_col is not None and detector.duration_col < len(row):
             dur_cell = row[detector.duration_col]
-            parsed = self._parse_duration_cell(dur_cell, unit=self.numeric_duration_unit)
+            unit = self.numeric_duration_unit
+            if unit == "auto" and detector.duration_unit:
+                unit = detector.duration_unit
+            parsed = self._parse_duration_cell(dur_cell, unit=unit)
             sr.duration_minutes = parsed
             sr.duration_source = "source_column"
             sr.duration_confirmed = parsed is not None

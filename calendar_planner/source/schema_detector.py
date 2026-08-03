@@ -75,7 +75,7 @@ CUSTOMER_PATTERNS = [
 ]
 
 DURATION_PATTERNS = [
-    re.compile(r"длительность\s*(встречи)?", re.IGNORECASE),
+    re.compile(r"длительн", re.IGNORECASE),  # covers "длительность", "Длительнось" (typo)
     re.compile(r"продолжительность", re.IGNORECASE),
     re.compile(r"duration", re.IGNORECASE),
     re.compile(r"минут", re.IGNORECASE),
@@ -116,6 +116,7 @@ class TableSchemaDetector:
         self.actual_date_col: int | None = None
         self.actual_time_col: int | None = None
         self.duration_col: int | None = None
+        self.duration_unit: str | None = None
         self.performer_col: int | None = None
         self.customer_col: int | None = None
         self.link_cols: list[int] = []
@@ -171,6 +172,11 @@ class TableSchemaDetector:
                     p.search(normalized) for p in AGREED_TIME_PATTERNS + PLANNED_TIME_PATTERNS + ACTUAL_TIME_PATTERNS
                 ):
                     self.duration_col = col_idx
+                    if self.duration_unit is None:
+                        if re.search(r"час|\bч\b|hour", normalized):
+                            self.duration_unit = "hours"
+                        elif "мин" in normalized:
+                            self.duration_unit = "minutes"
 
                 if self.performer_col is None and any(p.search(normalized) for p in PERFORMER_PATTERNS):
                     self.performer_col = col_idx
@@ -211,6 +217,7 @@ class TableSchemaDetector:
             "actual_date_col": self.actual_date_col,
             "actual_time_col": self.actual_time_col,
             "duration_col": self.duration_col,
+            "duration_unit": self.duration_unit,
             "performer_col": self.performer_col,
             "customer_col": self.customer_col,
             "link_cols": self.link_cols,
