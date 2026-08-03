@@ -231,7 +231,14 @@ class MCPCalendarGateway:
         """
         if isinstance(result, dict):
             if result.get("id") or result.get("event_id") or result.get("iCalUid"):
-                return {"status": "created", "message": "Event created", "result": result, "payload": payload}
+                return {
+                    "status": "created",
+                    "message": "Event created",
+                    "result": result,
+                    "payload": payload,
+                    "event_id": result.get("id") or result.get("event_id") or result.get("iCalUid"),
+                    "url": result.get("htmlLink") or result.get("url") or "",
+                }
             text = str(result)
         else:
             text = str(result)
@@ -243,12 +250,14 @@ class MCPCalendarGateway:
                 "message": text.splitlines()[0] if text.strip() else "Event created",
                 "result": result,
                 "payload": payload,
+                "url": self._extract_url(text),
             }
         if any(m in low for m in self._failure_markers()):
             return {
                 "status": "failed",
                 "error": "CREATE_REJECTED",
                 "message": text.strip()[:300] or "Event creation rejected by server",
+                "technical_message": text.strip()[:2000],
                 "result": result,
                 "payload": payload,
             }
@@ -258,9 +267,15 @@ class MCPCalendarGateway:
             "error": "UNKNOWN_RESPONSE",
             "message": "Не удалось подтвердить создание события. Ответ сервера: "
                        + (text[:200] if text.strip() else "<пусто>"),
+            "technical_message": text.strip()[:2000],
             "result": result,
             "payload": payload,
         }
+
+    @staticmethod
+    def _extract_url(text: str) -> str:
+        m = re.search(r"https?://\S+", text)
+        return m.group(0) if m else ""
 
     def get_last_raw_response(self) -> list[dict]:
         return self._last_response_raw

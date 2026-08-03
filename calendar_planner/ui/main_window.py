@@ -979,8 +979,17 @@ class MainWindow:
                 messagebox.showwarning("Ошибка", "Контейнер не инициализирован")
                 return
 
+            from calendar_planner.app.creation_attempt import (
+                CreationLogger,
+                build_attempt,
+                class_create_status,
+            )
             from calendar_planner.calendar.creator import EventCreator
             from calendar_planner.calendar.mcp_gateway import MCPCalendarGateway
+
+            session_id = getattr(self.controller, "_session", None)
+            session_id = session_id.session_id if session_id else None
+            logger = CreationLogger(session_id=session_id)
 
             calendar_gw = self.container.get_calendar_gateway()
             if not isinstance(calendar_gw, MCPCalendarGateway):
@@ -1009,6 +1018,19 @@ class MainWindow:
             payload_errors = creator.validate_payload(payload)
 
             if payload_errors:
+                attempt = build_attempt(
+                    draft_id=draft.draft_id,
+                    status="validation_failed",
+                    subject=draft.subject.value or "Без темы",
+                    error_code="PAYLOAD_VALIDATION_FAILED",
+                    message="; ".join(payload_errors),
+                    technical_message="; ".join(payload_errors),
+                    payload=payload,
+                )
+                logger.record(attempt)
+                frame_obj = frame if frame is not None else self._stage_frames.get(5)
+                if frame_obj is not None:
+                    frame_obj.show_creation_attempt(attempt)
                 messagebox.showerror(
                     "Ошибки payload",
                     "Невозможно создать событие — payload содержит ошибки:\n\n"
@@ -1024,52 +1046,138 @@ class MainWindow:
                 f"Тема: {payload.get('subject', '—')}\n"
                 f"Начало: {(payload.get('start', {}) or {}).get('dateTime', '—')}\n"
                 f"Окончание: {(payload.get('end', {}) or {}).get('dateTime', '—')}\n"
+                f"Длительность: {draft.duration_minutes.value or '—'} мин\n"
                 f"Участников: {len(payload.get('attendees', []))}\n"
                 f"Место: {(payload.get('location', {}) or {}).get('displayName', '—')}\n"
                 f"Ссылка: {payload.get('onlineMeetingUrl', '—')}\n\n"
                 f"--- JSON payload ---\n{payload_preview}\n\n"
                 f"Создать событие?",
             ):
+                cancelled = build_attempt(
+                    draft_id=draft.draft_id,
+                    status="cancelled",
+                    subject=draft.subject.value or "Без темы",
+                    message="Пользователь отменил создание",
+                    payload=payload,
+                )
+                logger.record(cancelled)
                 return
 
-            result = creator.create_one(draft)
-            result["payload"] = payload
-            import datetime as dt
-            result["created_at"] = dt.datetime.now(dt.UTC).isoformat()
+            try:
+                result = creator.create_one(draft)
+            except Exception as exc:
+                attempt = build_attempt(
+                    draft_id=draft.draft_id,
+                    status="transport_failed",
+                    subject=draft.subject.value or "Без темы",
+                    error_code="TRANSPORT_FAILED",
+                    message=str(exc),
+                    technical_message=repr(exc),
+                    payload=payload,
+                )
+                logger.record(attempt)
+                frame_obj = frame if frame is not None else self._stage_frames.get(5)
+                if frame_obj is not None:
+                    frame_obj.show_creation_attempt(attempt)
+                messagebox.showerror("Ошибка", f"Не удалось создать событие: {exc}")
+                return
 
-            # Save to session controller
+            result.setdefault("payload", payload)
+            status = class_create_status(result.get("status", "error"), result.get("error"))
+            attempt = build_attempt(
+                draft_id=draft.draft_id,
+                status=status,
+                subject=draft.subject.value or "Без темы",
+                error_code=result.get("error") if result.get("status") != "created" else None,
+                message=str(result.get("message", "")),
+                technical_message=str(result.get("technical_message", "")),
+                payload=payload,
+                raw=result.get("result"),
+                event_id=str(result.get("event_id", "") or ""),
+                url=str(result.get("url", "") or ""),
+            )
+
+            # Post-create verification (only for claimed-created attempts).
+            if status == "created_unverified":
+                verification = self._verify_created_event(draft, result)
+                attempt.verification = verification
+                if verification.get("verified"):
+                    attempt.status = "created_verified"
+                else:
+                    attempt.status = "created_unverified"
+
+            attempt_id = logger.record(attempt)
+
             if hasattr(self.controller, 'add_creation_result'):
-                self.controller.add_creation_result(result)
+                self.controller.add_creation_result(attempt.to_dict())
 
             frame_obj = frame if frame is not None else self._stage_frames.get(5)
             if frame_obj is not None:
-                event_id = result.get("event_id", "")
-                if not event_id:
-                    r = result.get("result", {})
-                    if isinstance(r, dict):
-                        event_id = r.get("id", "") or r.get("event_id", "")
-                    elif isinstance(r, str):
-                        if "Событие создано" in r:
-                            event_id = "OK"
-                        else:
-                            event_id = ""
-                event_url = result.get("url", "")
-                if not event_url:
-                    r = result.get("result", {})
-                    if isinstance(r, dict):
-                        event_url = r.get("htmlLink", "") or r.get("url", "")
-                status = result.get("status", "error")
-                errors = _format_errors(result.get("errors", []))
-                frame_obj.show_creation_result(
-                    draft_id=draft.draft_id,
-                    subject=draft.subject.value or "Без темы",
-                    status=status,
-                    event_id=event_id,
-                    url=event_url,
-                    errors=errors,
-                )
+                frame_obj.show_creation_attempt(attempt, attempt_id=attempt_id)
 
         return real_create_callback
+
+    def _verify_created_event(self, draft, result) -> dict:
+        """Post-create verification: find the event by id, else subject+date+time."""
+        calendar_gw = self.container.get_calendar_gateway()
+        event_id = result.get("event_id", "")
+        try:
+            from datetime import date, timedelta
+
+            from calendar_planner.app.settings import settings
+
+            draft_date = self._parse_candidate_date(draft.start_date.value or "")
+            if draft_date is not None:
+                buffer = timedelta(days=settings.CALENDAR_DATE_RANGE_BUFFER_DAYS)
+                range_start = (draft_date - buffer).isoformat()
+                range_end = (draft_date + buffer).isoformat()
+            else:
+                today = date.today().isoformat()
+                range_start = today
+                range_end = (date.today() + timedelta(days=90)).isoformat()
+
+            events = calendar_gw.find_events(range_start, range_end)
+
+            if event_id:
+                matched = [e for e in events if e.event_id and e.event_id == str(event_id)]
+                if matched:
+                    e = matched[0]
+                    return {
+                        "verified": True,
+                        "method": "event_id",
+                        "event_id": event_id,
+                        "found_subject": e.subject,
+                        "found_start": e.start.to_dict() if e.start else None,
+                        "found_count": len(matched),
+                    }
+
+            # fallback: subject + date + time
+            subject = (draft.subject.value or "").strip().lower()
+            date_str = draft.start_date.value or ""
+            time_str = draft.start_time.value or ""
+            for e in events:
+                if (e.subject.strip().lower() == subject and e.start
+                        and e.start.display_datetime.date().isoformat() == date_str
+                        and e.start.display_datetime.strftime("%H:%M") == time_str):
+                    return {
+                            "verified": True,
+                            "method": "subject_datetime",
+                            "event_id": e.event_id,
+                            "found_subject": e.subject,
+                            "found_start": e.start.to_dict() if e.start else None,
+                            "found_count": len(events),
+                        }
+
+            return {
+                "verified": False,
+                "method": "not_found",
+                "event_id": event_id,
+                "range_start": range_start,
+                "range_end": range_end,
+                "checked_events": len(events),
+            }
+        except Exception as exc:
+            return {"verified": False, "method": "error", "error": str(exc)}
 
     def _check_connections(self) -> None:
         if self.container is None:

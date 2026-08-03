@@ -7,6 +7,28 @@ from calendar_planner.domain.models import FinalEventDraft
 from calendar_planner.domain.validation import preflight_validate
 from calendar_planner.ui.event_editor import EventEditorFrame
 
+_STATUS_TEXT = {
+    "validation_failed": "Валидация не пройдена",
+    "transport_failed": "Ошибка транспорта",
+    "server_rejected": "Сервер отклонил",
+    "unknown_response": "Ответ не распознан",
+    "created_unverified": "Создано (не проверено)",
+    "created_verified": "Создано и подтверждено",
+    "dry_run": "DRY RUN — событие не создано",
+    "cancelled": "Отменено пользователем",
+}
+
+_STATUS_TAG = {
+    "validation_failed": "failed",
+    "transport_failed": "failed",
+    "server_rejected": "failed",
+    "unknown_response": "failed",
+    "created_unverified": "created",
+    "created_verified": "created",
+    "dry_run": "dry_run",
+    "cancelled": "dry_run",
+}
+
 
 class Stage6CreationFrame(ttk.Frame):
     def __init__(self, parent, drafts: list[FinalEventDraft], on_recheck=None, on_create=None, on_real_create=None, **kwargs):
@@ -21,6 +43,7 @@ class Stage6CreationFrame(ttk.Frame):
         self._current_draft: FinalEventDraft | None = None
         self._results_table: ttk.LabelFrame | None = None
         self._results_tree: ttk.Treeview | None = None
+        self._attempts: dict[str, dict] = {}
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -187,6 +210,7 @@ class Stage6CreationFrame(ttk.Frame):
         self._current_draft = None
         self._results_table = None
         self._results_tree = None
+        self._attempts = {}
         self._build_ui()
 
     def _build_action_bar(self) -> None:
@@ -196,12 +220,13 @@ class Stage6CreationFrame(ttk.Frame):
         ttk.Button(bar, text="Предпросмотр отмеченных", command=self._create_checked).pack(side=tk.LEFT, padx=2)
         ttk.Button(bar, text="Создать текущую карточку", command=self._real_create_selected).pack(side=tk.LEFT, padx=(20, 2))
         ttk.Button(bar, text="Создать отмеченные события", command=self._real_create_checked).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bar, text="Открыть папку логов", command=self._open_logs_folder).pack(side=tk.LEFT, padx=(20, 2))
 
     def _create_selected(self) -> None:
         draft = self._current_draft
         if draft is None:
             from tkinter import messagebox
-            messagebox.showinfo("Информация", "Сначала выберите карточку для предпросмотра.")
+            messagebox.showinfo("�?нформация", "Сначала выберите карточку для предпросмотра.")
             return
         if self.on_create is not None:
             self.on_create(draft)
@@ -212,7 +237,7 @@ class Stage6CreationFrame(ttk.Frame):
         selected = self.get_selected_drafts()
         if not selected:
             from tkinter import messagebox
-            messagebox.showinfo("Информация", "Нет отмеченных карточек событий.")
+            messagebox.showinfo("�?нформация", "Нет отмеченных карточек событий.")
             return
         if self.on_create is not None:
             for draft in selected:
@@ -225,7 +250,7 @@ class Stage6CreationFrame(ttk.Frame):
         draft = self._current_draft
         if draft is None:
             from tkinter import messagebox
-            messagebox.showinfo("Информация", "Сначала выберите карточку.")
+            messagebox.showinfo("�?нформация", "Сначала выберите карточку.")
             return
         from tkinter import messagebox
         if not messagebox.askyesno(
@@ -238,7 +263,7 @@ class Stage6CreationFrame(ttk.Frame):
         ):
             return
         if self.on_real_create is None:
-            messagebox.showinfo("Информация", "Создание недоступно — отсутствует подключение к календарю.")
+            messagebox.showinfo("�?нформация", "Создание недоступно — отсутствует подключение к календарю.")
             return
         self.on_real_create(draft)
 
@@ -246,7 +271,7 @@ class Stage6CreationFrame(ttk.Frame):
         selected = self.get_selected_drafts()
         if not selected:
             from tkinter import messagebox
-            messagebox.showinfo("Информация", "Нет отмеченных карточек событий.")
+            messagebox.showinfo("�?нформация", "Нет отмеченных карточек событий.")
             return
         from tkinter import messagebox
         count = len(selected)
@@ -257,7 +282,7 @@ class Stage6CreationFrame(ttk.Frame):
         ):
             return
         if self.on_real_create is None:
-            messagebox.showinfo("Информация", "Создание недоступно — отсутствует подключение к календарю.")
+            messagebox.showinfo("�?нформация", "Создание недоступно — отсутствует подключение к календарю.")
             return
         for draft in selected:
             self.on_real_create(draft)
@@ -292,6 +317,57 @@ class Stage6CreationFrame(ttk.Frame):
             errors or "—",
         ), tags=(tag,))
 
+    def show_creation_attempt(self, attempt, attempt_id: str | None = None) -> None:
+        """Render a CreationAttemptResult into the results table."""
+        self._ensure_results_table()
+        aid = attempt_id or getattr(attempt, "attempt_id", "")
+        if not aid:
+            aid = f"att-{len(self._attempts) + 1}"
+        self._attempts[aid] = attempt.to_dict() if hasattr(attempt, "to_dict") else dict(attempt)
+
+        status = getattr(attempt, "status", "")
+        code = getattr(attempt, "error_code", None)
+        event_id = getattr(attempt, "event_id", None) or ""
+        subject = getattr(attempt, "subject", "") or "Без темы"
+
+        status_text = _STATUS_TEXT.get(status, status)
+        if status in ("created_verified", "created_unverified") and event_id:
+            status_text += f" (ID: {event_id})"
+        if code:
+            status_text += f" [{code}]"
+
+        reason = getattr(attempt, "message", "") or ""
+        if not reason and code:
+            reason = code
+
+        self._results_tree.insert("", tk.END, values=(
+            getattr(attempt, "draft_id", ""),
+            subject[:60],
+            status_text,
+            reason[:200] or "—",
+        ), tags=(_STATUS_TAG.get(status, "failed"),))
+
+    def _open_logs_folder(self) -> None:
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        from calendar_planner.app.settings import settings
+
+        logs_dir = Path(settings.RUNS_DIR).parent / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(logs_dir))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(logs_dir)])
+            else:
+                subprocess.Popen(["xdg-open", str(logs_dir)])
+        except Exception as exc:
+            from tkinter import messagebox
+            messagebox.showwarning("Логи", f"Не удалось открыть папку: {exc}\nПапка: {logs_dir}")
+
     def _ensure_results_table(self) -> None:
         if self._results_table is not None:
             return
@@ -306,12 +382,12 @@ class Stage6CreationFrame(ttk.Frame):
             show="headings",
             height=6,
         )
-        self._results_tree.heading("event", text="Тема / Технический ID")
-        self._results_tree.heading("status", text="Статус")
-        self._results_tree.heading("errors", text="Ошибки")
+        self._results_tree.heading("event", text="Черновик")
+        self._results_tree.heading("status", text="Статус / Код")
+        self._results_tree.heading("errors", text="Причина")
         self._results_tree.column("event", width=250, minwidth=100)
-        self._results_tree.column("status", width=150, minwidth=80)
-        self._results_tree.column("errors", width=300, minwidth=100)
+        self._results_tree.column("status", width=220, minwidth=100)
+        self._results_tree.column("errors", width=320, minwidth=120)
 
         self._results_tree.tag_configure("created", foreground="green")
         self._results_tree.tag_configure("dry_run", foreground="blue")
@@ -332,23 +408,86 @@ class Stage6CreationFrame(ttk.Frame):
         if not selection:
             return
         values = self._results_tree.item(selection[0], "values")
-        if len(values) < 3:
+        if not values:
             return
-        errors = values[3] if len(values) > 3 else values[2]
-        if not errors or errors == "—":
+        draft_id = values[0] if values else ""
+        attempt = self._attempts.get(draft_id)
+        if attempt is None:
+            # legacy row without stored attempt
+            if len(values) >= 3 and values[2] and values[2] != "—":
+                self._show_text_dialog("Детали", values[2])
             return
+        self._show_attempt_dialog(attempt)
+
+    def _show_text_dialog(self, title: str, text: str) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.geometry("500x300")
+        box = tk.Text(dialog, wrap=tk.WORD, font=("Consolas", 9))
+        box.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        box.insert(tk.END, text)
+        box.config(state=tk.DISABLED)
+
+        def copy():
+            self.clipboard_clear()
+            self.clipboard_append(text)
+
+        ttk.Button(dialog, text="Копировать", command=copy).pack(pady=(0, 10))
+
+    def _show_attempt_dialog(self, attempt: dict) -> None:
+        import json
 
         dialog = tk.Toplevel(self)
-        dialog.title("Ошибки создания")
-        dialog.geometry("500x300")
+        dialog.title(f"Диагностика создания — {attempt.get('draft_id', '')}")
+        dialog.geometry("760x560")
 
-        text = tk.Text(dialog, wrap=tk.WORD, font=("Consolas", 9))
-        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        text.insert(tk.END, errors)
-        text.config(state=tk.DISABLED)
+        status = attempt.get("status", "")
+        code = attempt.get("error_code") or ""
+        reason = attempt.get("message") or "—"
+        created_at = attempt.get("created_at") or "—"
+        attempt_id = attempt.get("attempt_id") or "—"
 
-        def copy_errors():
+        summary = (
+            f"Статус: {_STATUS_TEXT.get(status, status)}\n"
+            f"Код: {code}\n"
+            f"Время: {created_at}\n"
+            f"Attempt ID: {attempt_id}\n"
+            f"Event ID: {attempt.get('event_id') or '—'}\n"
+            f"URL: {attempt.get('url') or '—'}\n\n"
+            f"Причина: {reason}\n"
+        )
+
+        body = {
+            "attempt_id": attempt.get("attempt_id"),
+            "draft_id": attempt.get("draft_id"),
+            "status": status,
+            "error_code": code,
+            "message": attempt.get("message"),
+            "technical_message": attempt.get("technical_message"),
+            "created_at": created_at,
+            "event_id": attempt.get("event_id"),
+            "url": attempt.get("url"),
+            "verification": attempt.get("verification"),
+            "payload": attempt.get("payload"),
+        }
+
+        box = tk.Text(dialog, wrap=tk.WORD, font=("Consolas", 9))
+        box.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        box.insert(tk.END, summary + "\n" + "=" * 70 + "\n")
+        box.insert(tk.END, json.dumps(body, ensure_ascii=False, indent=2))
+        box.config(state=tk.DISABLED)
+
+        btns = ttk.Frame(dialog)
+        btns.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        def copy_diag():
             self.clipboard_clear()
-            self.clipboard_append(errors)
+            self.clipboard_append(json.dumps(body, ensure_ascii=False, indent=2))
 
-        ttk.Button(dialog, text="Копировать", command=copy_errors).pack(pady=(0, 10))
+        ttk.Button(btns, text="Копировать диагностику", command=copy_diag).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btns, text="Открыть папку логов", command=self._open_logs_folder).pack(side=tk.LEFT, padx=2)
+
+        if self.on_real_create is not None and status in ("validation_failed", "transport_failed", "server_rejected", "unknown_response"):
+            draft = next((d for d in self.drafts if d.draft_id == attempt.get("draft_id")), None)
+            if draft is not None:
+                ttk.Button(btns, text="Повторить", command=lambda: self.on_real_create(draft)).pack(side=tk.LEFT, padx=2)

@@ -221,3 +221,28 @@ def validate_payload(payload: dict) -> list[str]:
     elif not end:
         errors.append("end is required")
     return errors
+
+
+def validate_creation_payload(payload: dict) -> list[str]:
+    """Validate the canonical payload for creation with diagnostics context.
+
+    In addition to :func:`validate_payload`, checks duration is positive and
+    that every attendee carries a valid email.
+    """
+    errors = validate_payload(payload)
+
+    if payload.get("duration_minutes") is not None and payload.get("duration_minutes") <= 0:
+        errors.append("duration must be positive")
+
+    attendees = payload.get("attendees", [])
+    if isinstance(attendees, list):
+        for att in attendees:
+            if not isinstance(att, dict):
+                continue
+            addr = att.get("emailAddress")
+            email = addr.get("address", "") if isinstance(addr, dict) else ""
+            if not email:
+                errors.append("attendee is missing email")
+            elif not validate_email(email):
+                errors.append(f"invalid attendee email: {email}")
+    return errors

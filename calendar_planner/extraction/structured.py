@@ -21,18 +21,32 @@ from calendar_planner.source.schema_detector import (
     parse_names,
     split_subject_and_description,
 )
+from calendar_planner.source.schema_profile import (
+    SourceSchemaProfile,
+    resolve_schema_profile,
+)
 
 
 class StructuredExtractor:
-    def __init__(self, date_policy: MeetingDatePolicy = MeetingDatePolicy.AGREED_ONLY, numeric_duration_unit: str = "auto"):
+    def __init__(
+        self,
+        date_policy: MeetingDatePolicy = MeetingDatePolicy.AGREED_ONLY,
+        numeric_duration_unit: str = "auto",
+        profile: SourceSchemaProfile | None = None,
+    ):
         self.date_policy = date_policy
         self.numeric_duration_unit = numeric_duration_unit
+        self.profile = profile
+        self.used_profile: SourceSchemaProfile | None = None
         self.skipped_rows: list[dict] = []
 
     def extract(self, source: ExtractedSource) -> dict[str, list[MeetingCandidate]]:
         result: dict[str, list[MeetingCandidate]] = {}
         self.skipped_rows = []
+        self.used_profile = None
         counter = 0
+
+        google_sheet_id = source.metadata.get("google_sheet_id") if source.metadata else None
 
         for sheet_name, sheet_data in source.sheets.items():
             if not sheet_data:
@@ -41,11 +55,21 @@ class StructuredExtractor:
             detector = TableSchemaDetector()
             detector.detect(sheet_data)
 
+            # Fixed positional profile (if any) takes precedence over header guesses.
+            profile = self.profile or resolve_schema_profile(google_sheet_id, sheet_name)
+            self.used_profile = profile
+            if profile is not None:
+                self._apply_profile(detector, profile)
+
             candidates = []
             start_row = detector.header_row + 1
+            if profile is not None:
+                start_row = max(start_row, profile.first_row)
 
             for row_idx in range(start_row, len(sheet_data)):
                 row = sheet_data[row_idx]
+                if profile is not None and profile.skip_row and profile.skip_row(row):
+                    continue
                 if all(not cell for cell in row):
                     continue
 
@@ -85,6 +109,22 @@ class StructuredExtractor:
 
         return result
 
+    @staticmethod
+    def _apply_profile(detector: TableSchemaDetector, profile: SourceSchemaProfile) -> None:
+        """Override detector column indices with the fixed profile layout."""
+        detector.subject_col = profile.column("subject")
+        detector.agreed_date_col = profile.column("agreed_date")
+        detector.agreed_time_col = profile.column("agreed_time")
+        detector.planned_date_col = profile.column("planned_date")
+        detector.planned_time_col = profile.column("planned_time")
+        detector.actual_date_col = profile.column("actual_date")
+        detector.actual_time_col = profile.column("actual_time")
+        detector.duration_col = profile.column("duration")
+        detector.duration_unit = profile.duration
+        detector.performer_col = profile.column("performer")
+        detector.customer_col = profile.column("customer")
+        detector.header_row = profile.header_row
+
     def _populate_row(self, sr: StructuredMeetingRow, row: list[str], detector: TableSchemaDetector) -> None:
         if detector.subject_col is not None and detector.subject_col < len(row):
             raw_subject = row[detector.subject_col]
@@ -116,6 +156,12 @@ class StructuredExtractor:
             sr.duration_minutes = parsed
             sr.duration_source = "source_column"
             sr.duration_confirmed = parsed is not None
+            sr.raw_cells["_duration_diagnostic"] = {
+                "raw": dur_cell,
+                "unit": unit,
+                "unit_source": "profile" if self.used_profile else ("header" if detector.duration_unit else self.numeric_duration_unit),
+                "minutes": parsed,
+            }
 
         if detector.performer_col is not None and detector.performer_col < len(row):
             sr.performer_names = parse_names(row[detector.performer_col])
@@ -177,6 +223,13 @@ class StructuredExtractor:
             minutes = int(float(f"0.{frac_str}") * 60)
             return hours * 60 + minutes
 
+        # bare decimal number, e.g. "1,5" -> 1.5 hours (only when unit is hours)
+        m = re.match(r"^(\d+)[,.](\d+)$", cleaned)
+        if m and unit == "hours":
+            hours = int(m.group(1))
+            frac_minutes = int(float(f"0.{m.group(2)}") * 60)
+            return hours * 60 + frac_minutes
+
         try:
             bare = int(cleaned)
         except ValueError:
@@ -231,6 +284,18 @@ class StructuredExtractor:
             return None
 
         candidate_id = f"SRC-EVT-{counter + 1:03d}"
+
+        if sr.duration_minutes is not None and "_duration_diagnostic" in sr.raw_cells:
+            diag = sr.raw_cells.pop("_duration_diagnostic")
+            evidence.append({
+                "field": "duration",
+                "method": "source_column",
+                "source": f"{sr.sheet_name}:R{sr.row_number}",
+                "raw": diag["raw"],
+                "unit": diag["unit"],
+                "unit_source": diag["unit_source"],
+                "minutes": diag["minutes"],
+            })
 
         return MeetingCandidate(
             candidate_id=candidate_id,
