@@ -49,9 +49,12 @@ class MainWindow:
     def _build_ui(self) -> None:
         self._build_top_panel()
         self._build_progress_bar()
+        # Pack the bottom bar early so it is always visible and gets the full
+        # width; the resizable content (sidebar + main area) is packed last
+        # and takes the remaining space.
+        self._build_bottom_panel()
         self._build_stage_sidebar()
         self._build_main_area()
-        self._build_bottom_panel()
 
     def _build_progress_bar(self) -> None:
         self._progress_frame = ttk.Frame(self.root)
