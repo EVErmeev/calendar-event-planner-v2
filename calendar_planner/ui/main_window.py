@@ -49,10 +49,12 @@ class MainWindow:
     def _build_ui(self) -> None:
         self._build_top_panel()
         self._build_progress_bar()
-        # Pack the bottom bar early so it is always visible and gets the full
-        # width; the resizable content (sidebar + main area) is packed last
-        # and takes the remaining space.
+        # Content wrapper holds sidebar + main area and expands; the bottom
+        # action bar is packed FIRST so it reserves the bottom strip and stays
+        # pinned and visible even on small screens.
         self._build_bottom_panel()
+        self._content_root = ttk.Frame(self.root)
+        self._content_root.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self._build_stage_sidebar()
         self._build_main_area()
 
@@ -99,7 +101,7 @@ class MainWindow:
         ttk.Button(top_frame, text="Вставить ссылку", command=self._paste_url).pack(side=tk.LEFT, padx=2)
 
     def _build_stage_sidebar(self) -> None:
-        sidebar = ttk.LabelFrame(self.root, text="Этапы", padding=5)
+        sidebar = ttk.LabelFrame(self._content_root, text="Этапы", padding=5)
         sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
 
         self.stage_labels: list[ttk.Label] = []
@@ -128,7 +130,7 @@ class MainWindow:
         self._update_stage_indicators()
 
     def _build_main_area(self) -> None:
-        self.main_frame = ttk.Frame(self.root)
+        self.main_frame = ttk.Frame(self._content_root)
         self.main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         self.main_label = ttk.Label(
