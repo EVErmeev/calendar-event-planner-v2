@@ -417,6 +417,68 @@ class TestPlaceholderDateTimes:
 
 
 # ---------------------------------------------------------------------------
+# create_event real outcome (participants / MCP regression)
+# ---------------------------------------------------------------------------
+
+class TestCreateInterpretation:
+    def _gw(self, result):
+        from calendar_planner.calendar.mcp_gateway import MCPCalendarGateway
+        def call(tool, args):
+            assert tool == "create_event"
+            return result
+        return MCPCalendarGateway(mcp_call_function=call, create_tool="create_event")
+
+    def test_dict_with_id_is_created(self):
+        gw = self._gw({"id": "evt-123"})
+        r = gw.create_event({"subject": "S", "start": "x"}, dry_run=False)
+        assert r["status"] == "created"
+
+    def test_success_text_is_created(self):
+        gw = self._gw("Событие создано: Тестовая встреча")
+        r = gw.create_event({"subject": "S", "start": "x"}, dry_run=False)
+        assert r["status"] == "created"
+
+    def test_error_text_is_failed_not_created(self):
+        gw = self._gw("Ошибка: не удалось создать встречу (участники)")
+        r = gw.create_event({"subject": "S", "start": "x"}, dry_run=False)
+        assert r["status"] == "failed"
+        assert r.get("error") == "CREATE_REJECTED"
+
+    def test_unknown_text_is_failed(self):
+        gw = self._gw("SERVER: no payload")
+        r = gw.create_event({"subject": "S", "start": "x"}, dry_run=False)
+        assert r["status"] == "failed"
+        assert r.get("error") == "UNKNOWN_RESPONSE"
+
+    def test_dry_run_untouched(self):
+        gw = self._gw("whatever")
+        r = gw.create_event({"subject": "S"}, dry_run=True)
+        assert r["status"] == "dry_run"
+
+
+# ---------------------------------------------------------------------------
+# Duration hours column (header typo + unit inference)
+# ---------------------------------------------------------------------------
+
+class TestDurationHoursColumn:
+    def test_header_typo_detected_as_hours(self):
+        from calendar_planner.source.schema_detector import TableSchemaDetector
+        det = TableSchemaDetector()
+        det.detect([
+            ["Тема", "Согласованная дата", "Согласованное время", "Длительнось, ч"],
+            ["x", "31.07.2026", "10:00", "2"],
+        ])
+        assert det.duration_col == 3
+        assert det.duration_unit == "hours"
+
+    def test_value_2_hours_is_120_minutes(self):
+        from calendar_planner.extraction.structured import StructuredExtractor
+        ex = StructuredExtractor(numeric_duration_unit="auto")
+        assert ex._parse_duration_cell("2", unit="hours") == 120
+        assert ex._parse_duration_cell("4", unit="hours") == 240
+
+
+# ---------------------------------------------------------------------------
 # Packaging / launcher
 # ---------------------------------------------------------------------------
 
