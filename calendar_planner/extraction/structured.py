@@ -121,8 +121,6 @@ class StructuredExtractor:
         detector.actual_time_col = profile.column("actual_time")
         detector.duration_col = profile.column("duration")
         detector.duration_unit = profile.duration
-        detector.performer_col = profile.column("performer")
-        detector.customer_col = profile.column("customer")
         detector.header_row = profile.header_row
 
     def _populate_row(self, sr: StructuredMeetingRow, row: list[str], detector: TableSchemaDetector) -> None:

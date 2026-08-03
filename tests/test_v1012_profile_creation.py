@@ -115,6 +115,41 @@ class TestDurationProfile:
         assert ex.used_profile is None
 
 
+class TestParticipantHeaderColumns:
+    """Profile must NOT override performer/customer columns — keep header detection."""
+
+    def _extract_participant_sheet(self):
+        from calendar_planner.extraction.structured import StructuredExtractor
+        sheet = [
+            ["№", "Тема", "Заказчик", "Длительность, ч", "Исполнитель", "Согласованная дата", "Согласованное время"],
+            ["1", "Обзор проекта", "Заказчик1", "2", "Исп1", "05.08.2026", "19:00"],
+            ["2", "Синк планов", "Заказчик2", "1,5", "Исп2", "05.08.2026", "12:00"],
+        ]
+        src = ExtractedSource(
+            source=SourceReference(type="memory"),
+            sheets={"24.07.26 - 05.08.26": sheet},
+            metadata={"google_sheet_id": SHEET_ID},
+        )
+        ex = StructuredExtractor(date_policy=MeetingDatePolicy.AGREED_ONLY, numeric_duration_unit="auto")
+        res = ex.extract(src)
+        return ex, res.get("24.07.26 - 05.08.26", [])
+
+    def test_performer_customer_from_header_when_profile_applied(self):
+        ex, cands = self._extract_participant_sheet()
+        assert ex.used_profile is not None
+        by = {c.subject: c for c in cands}
+        # subject/duration come from the profile; performer/customer from header columns
+        assert by["Обзор проекта"].performer_names == ["Исп1"]
+        assert by["Обзор проекта"].customer_names == ["Заказчик1"]
+        assert by["Синк планов"].performer_names == ["Исп2"]
+
+    def test_duration_still_from_profile(self):
+        _, cands = self._extract_participant_sheet()
+        by = {c.subject: c for c in cands}
+        assert by["Обзор проекта"].duration_minutes == 120
+        assert by["Синк планов"].duration_minutes == 90
+
+
 class TestDraftPropagation:
     def test_end_datetime_from_duration(self):
         from calendar_planner.drafts.builder import DraftBuilder

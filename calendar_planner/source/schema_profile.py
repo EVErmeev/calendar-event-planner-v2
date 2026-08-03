@@ -93,9 +93,7 @@ URALDRONE_MEETING_V1 = SourceSchemaProfile(
     first_row=1,
     column_map={
         "subject": 1,   # B
-        "customer": 2,  # C
         "duration": 3,  # D — always hours
-        "performer": 4,  # E
         "agreed_date": 5,  # F
         "agreed_time": 6,  # G
     },
