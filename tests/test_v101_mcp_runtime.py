@@ -11,6 +11,7 @@ Covers the TZ blocks:
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import types
@@ -128,6 +129,9 @@ def env_dir(monkeypatch):
 
 @pytest.fixture
 def container(env_dir, fake_transport):
+    import os
+    keys = ["MCP_ENABLED", "MCP_STDIO_COMMAND", "MCP_SERVER_URL",
+            "MCP_CALENDAR_FIND_TOOL", "MCP_CALENDAR_CREATE_TOOL"]
     os_env = mock.patch.dict("os.environ", {"APP_ENV": "test"})
     os_env.start()
     try:
@@ -135,6 +139,8 @@ def container(env_dir, fake_transport):
         yield c
     finally:
         os_env.stop()
+        for k in keys:
+            os.environ.pop(k, None)
 
 
 def _fresh_settings_from(env_file: Path) -> Settings:
@@ -203,6 +209,33 @@ class TestMCPConfigure:
         default_path = env_config.EnvConfigWriter.default().path
         assert default_path.name == ".env"
         assert REPO_ROOT in default_path.parents
+
+    def test_self_heals_mcp_from_env_when_settings_empty(self, env_dir, monkeypatch):
+        """A container whose Settings missed .env still picks up MCP from .env."""
+        import calendar_planner.app.container as cmod
+        monkeypatch.setattr(cmod, "StdioMCPTransport", FakeStdioTransport)
+        (env_dir / ".env").write_text(
+            "MCP_ENABLED=true\n"
+            'MCP_STDIO_COMMAND=powershell -File "C:\\x y\\x.ps1"\n'
+            "MCP_CALENDAR_FIND_TOOL=find_events\n"
+            "MCP_CALENDAR_CREATE_TOOL=create_event\n",
+            encoding="utf-8",
+        )
+        os_env = mock.patch.dict("os.environ", {"APP_ENV": "development"}, clear=False)
+        os_env.start()
+        try:
+            for k in ("MCP_ENABLED", "MCP_STDIO_COMMAND", "MCP_SERVER_URL",
+                      "MCP_CALENDAR_FIND_TOOL", "MCP_CALENDAR_CREATE_TOOL"):
+                os.environ.pop(k, None)
+            s = Settings()
+            assert s.MCP_STDIO_COMMAND == ""
+            c = AppContainer(s)
+            res = c.init_mcp()
+            assert res.get("status") == "success"
+            assert "x.ps1" in s.MCP_STDIO_COMMAND
+            assert s.MCP_STDIO_COMMAND.startswith("powershell")
+        finally:
+            os_env.stop()
 
     def test_zero_create_event_calls(self, container, env_dir):
         import calendar_planner.app.container as cmod
