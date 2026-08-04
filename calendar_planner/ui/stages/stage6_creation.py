@@ -484,7 +484,13 @@ class Stage6CreationFrame(ttk.Frame):
             self.clipboard_clear()
             self.clipboard_append(json.dumps(body, ensure_ascii=False, indent=2))
 
+        def copy_technical():
+            tech = attempt.get("technical_message") or attempt.get("message") or ""
+            self.clipboard_clear()
+            self.clipboard_append(str(tech))
+
         ttk.Button(btns, text="Копировать диагностику", command=copy_diag).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btns, text="Копировать техническое сообщение", command=copy_technical).pack(side=tk.LEFT, padx=2)
         ttk.Button(btns, text="Открыть папку логов", command=self._open_logs_folder).pack(side=tk.LEFT, padx=2)
 
         if self.on_real_create is not None and status in ("validation_failed", "transport_failed", "server_rejected", "unknown_response"):
