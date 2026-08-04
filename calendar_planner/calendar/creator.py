@@ -3,7 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from calendar_planner.domain.models import FinalEventDraft
-from calendar_planner.domain.validation import preflight_validate, validate_payload
+from calendar_planner.domain.validation import (
+    preflight_validate,
+    validate_creation_payload,
+)
 
 
 class EventCreator:
@@ -19,6 +22,7 @@ class EventCreator:
                 "dateTime": f"{draft.start_date.value}T{draft.start_time.value}:00",
                 "timeZone": draft.timezone.value or "UTC",
             },
+            "duration_minutes": draft.duration_minutes.value,
         }
 
         if draft.is_all_day:
@@ -90,7 +94,7 @@ class EventCreator:
             return result
 
         payload = self.build_payload(draft)
-        errors = validate_payload(payload)
+        errors = validate_creation_payload(payload)
 
         if errors:
             result = {
@@ -121,7 +125,7 @@ class EventCreator:
         return self.creation_results
 
     def validate_payload(self, payload: dict) -> list[str]:
-        return validate_payload(payload)
+        return validate_creation_payload(payload)
 
     def validate_draft_before_create(self, draft: FinalEventDraft) -> list[dict]:
         result = preflight_validate(draft)

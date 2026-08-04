@@ -122,8 +122,31 @@ if not exist "%VENV_PYTHON%" (
 )
 
 :: ============================================================
+:: Verify runtime dependencies (repair if missing)
+:: ============================================================
+:check_deps
+"%VENV_PYTHON%" -c "import calendar_planner, keyring, requests_ntlm" >nul 2>&1
+if not errorlevel 1 goto :run_app
+
+echo Runtime dependencies missing — repairing...
+( echo %date% %time% Missing runtime deps; running pip install -e . ) >> "%LOG_FILE%"
+"%VENV_PYTHON%" -m pip install -e . -q
+if errorlevel 1 goto :dep_repair_failed
+
+"%VENV_PYTHON%" -c "import calendar_planner, keyring, requests_ntlm" >nul 2>&1
+if not errorlevel 1 goto :run_app
+
+:dep_repair_failed
+echo [ERROR] Runtime dependencies missing even after repair.
+echo Run: .\.venv\Scripts\python -m pip install -e .
+( echo %date% %time% FATAL: runtime deps missing after repair ) >> "%LOG_FILE%"
+pause
+exit /b 1
+
+:: ============================================================
 :: Run application
 :: ============================================================
+:run_app
 ( echo %date% %time% Running: %VENV_PYTHON% -m calendar_planner.app.bootstrap %* ) >> "%LOG_FILE%"
 
 "%VENV_PYTHON%" -m calendar_planner.app.bootstrap %*

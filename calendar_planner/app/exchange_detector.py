@@ -58,10 +58,21 @@ class ExchangeMCPConfigDetector:
             mcp_servers = data.get("mcpServers") or data.get("mcp_servers") or {}
             exchange_cfg = mcp_servers.get("exchange", {})
 
+            if not exchange_cfg:
+                # opencode.json uses {"mcp": {"exchange": {"command": [...]}}}
+                mcp_section = data.get("mcp") or {}
+                exchange_cfg = mcp_section.get("exchange", {})
+
             if exchange_cfg:
                 result["found"] = True
-                result["command"] = exchange_cfg.get("command", "")
-                result["transport"] = "stdio" if exchange_cfg.get("command") else "http"
+                raw_command = exchange_cfg.get("command", "")
+                if isinstance(raw_command, list):
+                    result["command"] = self._join_command(raw_command)
+                elif isinstance(raw_command, str):
+                    result["command"] = raw_command
+                else:
+                    result["command"] = ""
+                result["transport"] = "stdio" if result["command"] else "http"
                 result["tools"] = self._known_exchange_tools()
                 return result
 
@@ -76,6 +87,17 @@ class ExchangeMCPConfigDetector:
             return result
 
         return result
+
+    @staticmethod
+    def _join_command(parts: list) -> str:
+        """Join a command list into a shell string, quoting parts with spaces."""
+        quoted = []
+        for part in parts:
+            part = str(part)
+            if " " in part and not (part.startswith('"') and part.endswith('"')):
+                part = f'"{part}"'
+            quoted.append(part)
+        return " ".join(quoted)
 
     @staticmethod
     def _known_exchange_tools() -> list[str]:

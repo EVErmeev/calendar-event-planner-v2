@@ -30,6 +30,142 @@ class AppContainer:
     def _is_test_env(self) -> bool:
         return self.settings.APP_ENV == "test"
 
+    def _reset_mcp_state(self) -> None:
+        """Close and drop all MCP state so it can be rebuilt."""
+        if self._mcp_transport is not None:
+            try:
+                self._mcp_transport.close()
+            except Exception:
+                logger.debug("close old MCP transport failed", exc_info=True)
+        self._mcp_transport = None
+        self._calendar_gateway = None
+        self._mcp_initialized = False
+        self._mcp_disabled_or_unavailable = False
+        self._init_warnings = []
+
+    def _ensure_mcp_settings_from_env(self) -> None:
+        """Self-heal: if MCP is enabled but no transport is configured in runtime
+        settings, reload the MCP keys from the actual .env file.
+
+        Only fires when the MCP config is absent from the whole environment
+        (i.e. the app started before .env was applied) — never overrides an
+        explicit MCP_ENABLED/MCP_STDIO_COMMAND set by the caller. Avoids
+        touching the real .env during tests.
+        """
+        import os
+        if self._is_test_env:
+            return
+        if "MCP_ENABLED" in os.environ:
+            # The app (or the caller) already decided on MCP — respect it.
+            return
+        if self.settings.MCP_STDIO_COMMAND or self.settings.MCP_SERVER_URL:
+            return
+        if not self.settings.MCP_ENABLED:
+            return
+        try:
+            from calendar_planner.app.env_config import EnvConfigWriter
+            data = EnvConfigWriter.default().read_dict()
+            cmd = data.get("MCP_STDIO_COMMAND", "").strip()
+            if not cmd:
+                return
+            self.settings.MCP_STDIO_COMMAND = cmd
+            os.environ["MCP_STDIO_COMMAND"] = cmd
+            if data.get("MCP_CALENDAR_FIND_TOOL"):
+                self.settings.MCP_CALENDAR_FIND_TOOL = data["MCP_CALENDAR_FIND_TOOL"].strip()
+                os.environ["MCP_CALENDAR_FIND_TOOL"] = self.settings.MCP_CALENDAR_FIND_TOOL
+            if data.get("MCP_CALENDAR_CREATE_TOOL"):
+                self.settings.MCP_CALENDAR_CREATE_TOOL = data["MCP_CALENDAR_CREATE_TOOL"].strip()
+                os.environ["MCP_CALENDAR_CREATE_TOOL"] = self.settings.MCP_CALENDAR_CREATE_TOOL
+            logger.info("MCP settings self-healed from .env")
+        except Exception:
+            logger.debug("MCP settings self-heal skipped", exc_info=True)
+
+    def _mcp_tool_status(self) -> dict:
+        """Read tools and check find/create availability without calling create."""
+        transport = self._mcp_transport
+        connected = transport is not None and transport.is_connected()
+        tools: list[str] = []
+        if connected:
+            list_tools = getattr(transport, "list_tools", None)
+            if callable(list_tools):
+                tools = list_tools()
+        return {
+            "connected": connected,
+            "tools": tools,
+            "tools_count": len(tools),
+            "find_events": self.settings.MCP_CALENDAR_FIND_TOOL in tools,
+            "create_event": self.settings.MCP_CALENDAR_CREATE_TOOL in tools,
+            "calendar_gateway_ready": self._calendar_gateway is not None,
+        }
+
+    def configure_mcp_stdio(
+        self,
+        command: str,
+        find_tool: str,
+        create_tool: str,
+        persist: bool = True,
+    ) -> dict:
+        """Configure, persist, connect and verify a local stdio MCP in one call.
+
+        Steps: reset -> update settings + os.environ -> save .env -> init_mcp ->
+        tools/list -> verify find_events/create_event -> create calendar gateway.
+
+        Never invokes ``create_event`` — only checks its presence in tools/list.
+        """
+        import os
+
+        self._reset_mcp_state()
+
+        self.settings.MCP_ENABLED = True
+        self.settings.MCP_STDIO_COMMAND = command
+        self.settings.MCP_SERVER_URL = ""
+        self.settings.MCP_CALENDAR_FIND_TOOL = find_tool
+        self.settings.MCP_CALENDAR_CREATE_TOOL = create_tool
+
+        os.environ["MCP_ENABLED"] = "true"
+        os.environ["MCP_STDIO_COMMAND"] = command
+        os.environ["MCP_SERVER_URL"] = ""
+        os.environ["MCP_CALENDAR_FIND_TOOL"] = find_tool
+        os.environ["MCP_CALENDAR_CREATE_TOOL"] = create_tool
+
+        if persist:
+            from calendar_planner.app.env_config import EnvConfigWriter
+            EnvConfigWriter.default().set({
+                "MCP_ENABLED": "true",
+                "MCP_SERVER_URL": "",
+                "MCP_STDIO_COMMAND": command,
+                "MCP_CALENDAR_FIND_TOOL": find_tool,
+                "MCP_CALENDAR_CREATE_TOOL": create_tool,
+            })
+
+        init_result = self.init_mcp()
+        status = self._mcp_tool_status()
+        status["init_result"] = init_result
+        status["saved"] = bool(persist)
+        status["command"] = command
+        status["transport"] = "local stdio"
+        status["find_tool_name"] = find_tool
+        status["create_tool_name"] = create_tool
+        status["status"] = "success" if status["connected"] else "failed"
+        status["message"] = (
+            f"Connected to {status['tools_count']} tools" if status["connected"]
+            else (init_result or {}).get("message", "MCP not connected")
+        )
+        return status
+
+    def reload_mcp_from_settings(self) -> dict:
+        """Recreate the transport and calendar gateway from current runtime settings."""
+        self._reset_mcp_state()
+        init_result = self.init_mcp()
+        status = self._mcp_tool_status()
+        status["init_result"] = init_result
+        status["status"] = "success" if status["connected"] else "failed"
+        status["message"] = (
+            f"Connected to {status['tools_count']} tools" if status["connected"]
+            else (init_result or {}).get("message", "MCP not connected")
+        )
+        return status
+
     def init_mcp(self) -> dict:
         """Initialize MCP transport and gateways.
 
@@ -39,6 +175,7 @@ class AppContainer:
 
         Supports both HTTP URL and stdio command transports.
         """
+        self._ensure_mcp_settings_from_env()
         if not self.settings.MCP_ENABLED:
             self._mcp_disabled_or_unavailable = True
             self._init_warnings.append("MCP is disabled (MCP_ENABLED=false)")
@@ -306,6 +443,7 @@ class AppContainer:
         }
 
     def _check_mcp_transport(self) -> dict:
+        self._ensure_mcp_settings_from_env()
         if self._mcp_transport is None:
             using_stdio = bool(self.settings.MCP_STDIO_COMMAND)
             using_http = bool(self.settings.MCP_SERVER_URL)

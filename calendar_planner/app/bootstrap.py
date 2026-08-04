@@ -5,6 +5,8 @@ import sys
 import tkinter as tk
 from pathlib import Path
 
+from calendar_planner.version import CLI_LABEL
+
 
 def configure_console_encoding() -> None:
     for stream_name in ("stdout", "stderr"):
@@ -62,7 +64,7 @@ def main() -> None:
         return
 
     if "--version" in sys.argv:
-        print("calendar-event-planner-v2 1.0.0")
+        print(CLI_LABEL)
         return
 
     if "--smoke-gui" in sys.argv:

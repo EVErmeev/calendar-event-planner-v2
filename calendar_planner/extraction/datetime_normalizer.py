@@ -152,6 +152,10 @@ def normalize_date_value(value: str) -> str | None:
 
     cleaned = value.strip().replace("\u00a0", " ")
 
+    if not any(ch.isdigit() for ch in cleaned):
+        # Placeholder-only values ("-", "- -", "—", "–", "/", "н/д", ...) mean "no date".
+        return None
+
     if re.match(r"^\d{2}\.\d{2}\.\d{4}$", cleaned):
         day, month, year = cleaned.split(".")
         return f"{year}-{month}-{day}"
@@ -174,6 +178,10 @@ def normalize_time_value(value: str) -> str | None:
         return None
 
     cleaned = value.strip().replace("\u00a0", " ")
+
+    if not any(ch.isdigit() for ch in cleaned):
+        # Placeholder-only values ("-", "- -", "—", ...) mean "no time".
+        return None
 
     if re.match(r"^\d{1,2}:\d{2}$", cleaned):
         hour, minute = cleaned.split(":")

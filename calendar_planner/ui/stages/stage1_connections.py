@@ -31,7 +31,7 @@ class Stage1ConnectionsFrame(ttk.Frame):
             else:
                 creds = self._cred_provider.load_persistent(self._saved_login)
                 if creds.available:
-                    self._saved_pass_status = "загружен из Credential Manager"
+                    self._saved_pass_status = "загружен из Windows Credential Manager"
                     self._cred_available = True
                 else:
                     self._saved_pass_status = "не задан"
@@ -67,6 +67,7 @@ class Stage1ConnectionsFrame(ttk.Frame):
         btn = ttk.Frame(self._scrollable)
         btn.pack(fill=tk.X, pady=5)
         ttk.Button(btn, text="Определить автоматически", command=self._auto_detect).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn, text="Применить и подключить Exchange MCP", command=self._apply_mcp).pack(side=tk.LEFT, padx=2)
         ttk.Button(btn, text="Проверить подключения", command=self._check_now).pack(side=tk.LEFT, padx=2)
         ttk.Button(btn, text="Копировать результат", command=self._copy).pack(side=tk.LEFT, padx=2)
 
@@ -180,6 +181,7 @@ class Stage1ConnectionsFrame(ttk.Frame):
         self._ews_pass_entry.configure(state="readonly")
         self._password_masked = True
         self._change_pass_btn.pack(side=tk.LEFT, padx=5)
+        self._ews_remember_var.set(True)
 
     def _on_change_password(self):
         self._ews_pass_entry.configure(state="normal")
@@ -201,7 +203,7 @@ class Stage1ConnectionsFrame(ttk.Frame):
                 self._find_tool_var.set("find_events")
                 self._create_tool_var.set("create_event")
                 self._log(f"Exchange MCP найден. Источник: активное подключение. Транспорт: local stdio. Tools: {len(tool_names)}.")
-                self._status_var.set("Exchange MCP найден. Нажмите «Проверить подключения»")
+                self._status_var.set("Exchange MCP найден. Нажмите «Применить и подключить Exchange MCP»")
                 return
 
         try:
@@ -213,84 +215,101 @@ class Stage1ConnectionsFrame(ttk.Frame):
                 self._transport_var.set("exchange-stdio")
                 self._find_tool_var.set(config["calendar_find_tool"])
                 self._create_tool_var.set(config["calendar_create_tool"])
-                self._log("Exchange MCP найден.")
-                self._status_var.set("Exchange MCP найден. Нажмите «Проверить подключения»")
+                self._log("Exchange MCP найден. Применяю и подключаю...")
+                self._apply_mcp()
             else:
                 self._log("Exchange MCP не найден.")
                 self._status_var.set("MCP не найден. Проверьте установку Exchange MCP.")
         except Exception as e:
             self._log(f"Ошибка: {e}")
 
+    def _apply_mcp(self):
+        if self.container is None:
+            self._log("Контейнер не инициализирован."); return
+        command = self._command_var.get().strip()
+        find_tool = self._find_tool_var.get().strip() or "find_events"
+        create_tool = self._create_tool_var.get().strip() or "create_event"
+        if not command:
+            self._log("[FAIL] Команда MCP пуста. Нажмите «Определить автоматически»."); return
+        self._log("Применяю и подключаю Exchange MCP...")
+        res = self.container.configure_mcp_stdio(command, find_tool, create_tool, persist=True)
+        if res.get("connected"):
+            self._log(
+                f"Exchange MCP найден и подключён.\n"
+                f"Transport: {res.get('transport')}\n"
+                f"Tools: {res.get('tools_count')}\n"
+                f"{res.get('find_tool_name', 'find_events')}: {'available' if res.get('find_events') else 'missing'}\n"
+                f"{res.get('create_tool_name', 'create_event')}: {'available' if res.get('create_event') else 'missing'}"
+            )
+            self._status_var.set("Exchange MCP найден и подключён. Нажмите «Проверить подключения»")
+            if self._on_check_done:
+                self._on_check_done(True)
+        else:
+            self._log(f"[FAIL] MCP не подключён: {res.get('message')}")
+            self._status_var.set("MCP не удалось подключить")
+        self._transport_var.set("exchange-stdio")
+
     def _save_ews(self):
         endpoint = self._ews_endpoint_var.get().strip()
         login = self._ews_login_var.get().strip()
         password = self._ews_pass_var.get().strip()
+        if password == "••••••••":
+            password = ""
 
-        # If mask is still active and no new password typed, don't overwrite credential
-        if self._password_masked and password == "••••••••":
-            if self.container:
-                self.container.configure_ews(endpoint, login, None)
-            self._log(f"EWS сохранён. Логин: {login}. Пароль не изменён.")
-            env_file = Path(__file__).parent.parent.parent.parent / ".env"
-            if env_file.exists():
-                lines = env_file.read_text(encoding="utf-8").split("\n")
-                updates = {"EWS_ENDPOINT": endpoint, "EWS_USERNAME": login}
-                out_lines = []
-                replaced = set()
-                for line in lines:
-                    key = line.split("=")[0].strip() if "=" in line else ""
-                    if key == "EWS_PASSWORD":
-                        continue
-                    if key in updates:
-                        out_lines.append(f"{key}={updates[key]}")
-                        replaced.add(key)
-                    else:
-                        out_lines.append(line)
-                for key, val in updates.items():
-                    if val and key not in replaced:
-                        out_lines.append(f"{key}={val}")
-                env_file.write_text("\n".join(out_lines), encoding="utf-8")
+        from calendar_planner.app.credential_provider import ews_save_decision
+        from calendar_planner.app.env_config import EnvConfigWriter
+
+        # Persist endpoint/login (never password) in the actual .env.
+        env_writer = EnvConfigWriter.default()
+        env_writer.set({"EWS_ENDPOINT": endpoint, "EWS_USERNAME": login})
+
+        if not login:
+            self._log("[FAIL] EWS: не указан логин.")
+            return
+        if not password:
+            # Mask still active => credentials already present; just reconfigure gateway.
+            if self._password_masked:
+                if self.container:
+                    self.container.configure_ews(endpoint, login, None)
+                self._log(f"EWS настроен. Логин: {login}. Пароль не изменён.")
+                return
+            self._log("[FAIL] EWS: не указан пароль.")
             return
 
-        if self.container:
-            self.container.configure_ews(endpoint, login, password if password else None)
+        remember = self._ews_remember_var.get()
 
-        if password and self._cred_provider:
+        if self.container:
+            self.container.configure_ews(endpoint, login, password)
+        if self._cred_provider:
             self._cred_provider.set_session_credentials(login, password)
-            if self._ews_remember_var.get():
-                result = self._cred_provider.save_persistent(login, password)
-                if result.success:
-                    self._ews_pass_status_var.set("сохранён в Credential Manager")
-                else:
-                    self._ews_pass_status_var.set(f"ошибка сохранения: {result.safe_message[:50]}")
-            else:
-                self._ews_pass_status_var.set("сохранён в сессии")
-            self._ews_pass_var.set("")
+
+        save_result = None
+        if remember and self._cred_provider:
+            save_result = self._cred_provider.save_persistent(login, password)
+
+        decision = ews_save_decision(remember, save_result)
+
+        # Apply UI outcome.
+        self._ews_remember_var.set(bool(decision.get("checkbox")))
+        if decision.get("apply_mask"):
+            self._ews_pass_var.set("••••••••")
+            self._ews_pass_entry.configure(state="readonly")
+            self._password_masked = True
+            self._change_pass_btn.pack(side=tk.LEFT, padx=5)
+        else:
+            # Failure: keep the typed password, no mask, allow retry.
+            self._ews_pass_entry.configure(state="normal")
             self._password_masked = False
             self._change_pass_btn.pack_forget()
+        self._ews_pass_status_var.set(decision.get("status", ""))
 
-        # Save endpoint/login to .env (NEVER password)
-        env_file = Path(__file__).parent.parent.parent.parent / ".env"
-        if env_file.exists():
-            lines = env_file.read_text(encoding="utf-8").split("\n")
-            updates = {"EWS_ENDPOINT": endpoint, "EWS_USERNAME": login}
-            out_lines = []
-            replaced = set()
-            for line in lines:
-                key = line.split("=")[0].strip() if "=" in line else ""
-                if key == "EWS_PASSWORD":
-                    continue  # Remove any old password
-                if key in updates:
-                    out_lines.append(f"{key}={updates[key]}")
-                    replaced.add(key)
-                else:
-                    out_lines.append(line)
-            for key, val in updates.items():
-                if val and key not in replaced:
-                    out_lines.append(f"{key}={val}")
-            env_file.write_text("\n".join(out_lines), encoding="utf-8")
-
-        self._log(f"EWS сохранён. Логин: {login}.")
+        if decision.get("success"):
+            if remember:
+                self._log(f"EWS сохранён в Windows Credential Manager. Логин: {login}. (read-after-write OK)")
+            else:
+                self._log("Пароль сохранён только до закрытия приложения (session-only).")
+        else:
+            self._log(f"EWS: ошибка сохранения ({decision.get('error_code')}). Введённый пароль не очищен — повторите.")
 
     def _clear_ews(self):
         login = self._ews_login_var.get().strip()
