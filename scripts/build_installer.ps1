@@ -31,6 +31,9 @@ if (-not $ISCC) {
 
 $Dist = Join-Path $Root "dist"
 New-Item -ItemType Directory -Path $Dist -Force | Out-Null
+# Inno Setup resolves [Files] Source relative to the .iss file directory, so
+# StagingDir MUST be absolute. Resolve it here.
+$StagingDir = (Resolve-Path $StagingDir).Path
 $OutExe = Join-Path $Dist "$Product-Setup-v$Version.exe"
 $ScriptPath = Join-Path $Root "installer\$Product.iss"
 
