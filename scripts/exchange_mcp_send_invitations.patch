@@ -1,0 +1,21 @@
+# Патч для exchange-mcp server (внешнее окружение MCP, вне git проекта).
+# Проблема: create_event с участниками отклонялся сервером с
+#   "'send_meeting_invitations' 'SendAndSaveCopy' must be one of
+#    ['SendOnlyToAll', 'SendToAllAndSaveCopy', 'SendToNone']".
+# Причина: _invitation_mode() возвращал SEND_AND_SAVE_COPY ('SendAndSaveCopy'),
+# который не входит в допустимые значения CalendarItem.save(). Корректная
+# константа exchangelib — SEND_TO_ALL_AND_SAVE_COPY ('SendToAllAndSaveCopy').
+#
+# Файл для применения (Windows PowerShell):
+#   cd "$env:LOCALAPPDATA\exchange-mcp\server"
+#   git apply --no-index .\server.py < файл.патча   (см. ниже)
+# Либо внеси две правки вручную, как показано ниже.
+
+--- server.py
++++ server.py
+@@ -30,7 +30,7 @@
+-from exchangelib.items import SEND_AND_SAVE_COPY, SEND_TO_NONE
++from exchangelib.items import SEND_TO_ALL_AND_SAVE_COPY, SEND_TO_NONE
+@@ -969,7 +969,7 @@
+-    return SEND_AND_SAVE_COPY if attendees else SEND_TO_NONE
++    return SEND_TO_ALL_AND_SAVE_COPY if attendees else SEND_TO_NONE
