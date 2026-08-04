@@ -14,6 +14,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install xvfb (GUI tests)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb
       - name: Install
         run: |
           pip install -r requirements.txt
@@ -21,8 +25,8 @@ jobs:
       - name: Test package install
         run: calendar-planner --help
       - name: Unit tests
-        run: python -m pytest tests/ -q --ignore=tests/test_gui_background_analysis.py
-      - name: Bundled MCP + runtime config + diagnostics + first-run + updates
+        run: xvfb-run -a python -m pytest tests/ -q
+      - name: Installer architecture tests
         run: python -m pytest tests/test_bundled_mcp.py tests/test_runtime_config_manifest.py tests/test_diagnostics.py tests/test_first_run.py tests/test_updates.py tests/test_version_consistency.py -q
 
   ruff:
@@ -51,28 +55,30 @@ jobs:
           python scripts/mypy_gate.py
 
   exchange-mcp-tests:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: MCP tests
+        shell: powershell
         run: |
           pip install pytest
           python -m pytest tests/test_bundled_mcp.py -q
       - name: Bundle build (files present + fix)
-        run: |
-          powershell -ExecutionPolicy Bypass -File scripts/build_exchange_mcp_bundle.ps1 -Version 1.0.0-cep.1
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/build_exchange_mcp_bundle.ps1 -Version 1.0.0-cep.1
 
   distribution-verification:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Build portable + verify
+        shell: powershell
         run: |
           powershell -ExecutionPolicy Bypass -File scripts/build_portable.ps1 -Version 1.1.0
           powershell -ExecutionPolicy Bypass -File scripts/verify_distribution.ps1 -ZipPath dist/CalendarEventPlanner-portable-v1.1.0.zip
@@ -93,8 +99,7 @@ jobs:
           python-version: "3.11"
       - name: Install Inno Setup
         shell: powershell
-        run: |
-          choco install innosetup -y
+        run: choco install innosetup -y
       - name: Prepare staging
         shell: powershell
         run: |
@@ -102,8 +107,7 @@ jobs:
           Expand-Archive dist/CalendarEventPlanner-portable-v1.1.0.zip build/installer_stage -Force
       - name: Build installer
         shell: powershell
-        run: |
-          powershell -ExecutionPolicy Bypass -File scripts/build_installer.ps1 -Version 1.1.0 -StagingDir build/installer_stage
+        run: powershell -ExecutionPolicy Bypass -File scripts/build_installer.ps1 -Version 1.1.0 -StagingDir build/installer_stage
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
@@ -125,5 +129,4 @@ jobs:
         run: powershell -ExecutionPolicy Bypass -File scripts/build_portable.ps1 -Version 1.1.0
       - name: Clean install smoke
         shell: powershell
-        run: |
-          powershell -ExecutionPolicy Bypass -File scripts/smoke_clean_windows.ps1 -ZipPath dist/CalendarEventPlanner-portable-v1.1.0.zip
+        run: powershell -ExecutionPolicy Bypass -File scripts/smoke_clean_windows.ps1 -ZipPath dist/CalendarEventPlanner-portable-v1.1.0.zip
