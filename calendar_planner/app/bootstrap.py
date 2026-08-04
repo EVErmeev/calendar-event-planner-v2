@@ -50,6 +50,7 @@ def main() -> None:
         print("  --cli            Запустить CLI-режим")
         print("  --version        Показать версию")
         print("  --smoke-gui      Проверить запуск GUI без реальной работы")
+        print("  --diagnostics    Запустить диагностику установки и выйти")
         print()
         print("CLI команды: python -m calendar_planner.cli <command>")
         print("  check-connections")
@@ -73,6 +74,10 @@ def main() -> None:
 
     if "--smoke-startup-mcp" in sys.argv:
         _smoke_startup_mcp()
+        return
+
+    if "--diagnostics" in sys.argv:
+        _run_diagnostics()
         return
 
     from calendar_planner.app.container import AppContainer
@@ -117,6 +122,24 @@ def _smoke_startup_mcp() -> None:
         container._mcp_transport.close()
     root.destroy()
     print("Startup with MCP: OK")
+
+
+def _run_diagnostics() -> None:
+    """Run installation diagnostics and print a safe summary."""
+    from calendar_planner.app.diagnostics import Diagnostics
+
+    diag = Diagnostics()
+    result = diag.run_all()
+    print("=== Diagnostics ===")
+    for c in result["checks"]:
+        status = c.get("status", "?")
+        print(f"  [{status.upper():6}] {c.get('check')}: {c.get('detail', '')}")
+    print(f"All ok: {result['all_ok']}")
+    if not result["all_ok"]:
+        print(f"Failed: {', '.join(result['failed'])}")
+    print("--- manifest ---")
+    print(f"  app_version: {result['manifest'].get('app_version')}")
+    print(f"  exchange_mcp: {result['manifest'].get('exchange_mcp_version')}")
 
 
 def _smoke_gui() -> None:

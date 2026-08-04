@@ -19,7 +19,7 @@ class TestVersionConsistency:
             metadata_version = __version__
 
         assert __version__ == metadata_version
-        assert __version__ == "1.0.1"
+        assert __version__ == "1.1.0"
 
     def test_cli_label_built_from_version(self):
         from calendar_planner.version import CLI_LABEL, PACKAGE_NAME, __version__
