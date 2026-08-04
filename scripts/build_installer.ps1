@@ -33,19 +33,25 @@ $Dist = Join-Path $Root "dist"
 New-Item -ItemType Directory -Path $Dist -Force | Out-Null
 # Inno Setup resolves [Files] Source relative to the .iss file directory, so
 # StagingDir MUST be absolute. Resolve it here.
-$StagingDir = (Resolve-Path $StagingDir).Path
-$OutExe = Join-Path $Dist "$Product-Setup-v$Version.exe"
+if (Test-Path $StagingDir) { $StagingDir = (Resolve-Path $StagingDir).Path }
+else { throw "Staging dir not found: $StagingDir" }
 $ScriptPath = Join-Path $Root "installer\$Product.iss"
 
 Write-Host "== build_installer =="
 Write-Host "ISCC: $ISCC"
 Write-Host "Staging: $StagingDir"
 
-& $ISCC "/DAppVersion=$Version" "/DProduct=$Product" "/DOutputDir=$Dist" "/DOutputExe=$OutExe" "/DStagingDir=$StagingDir" $ScriptPath
+& $ISCC "/DAppVersion=$Version" "/DProduct=$Product" "/DOutputDir=$Dist" "/DStagingDir=$StagingDir" $ScriptPath
 if ($LASTEXITCODE -ne 0) { throw "ISCC compile failed" }
 
+# Locate the built EXE (Inno names it from OutputBaseFilename).
+$OutExe = Get-ChildItem $Dist -Filter "$Product-Setup-*.exe" | Select-Object -First 1
+if (-not $OutExe) {
+    throw "Inno Setup produced no EXE in $Dist"
+}
+
 # Checksum
-$hash = (Get-FileHash $OutExe -Algorithm SHA256).Hash.ToLowerInvariant()
-Set-Content -Path "$OutExe.sha256" -Value "$hash  $([System.IO.Path]::GetFileName($OutExe))" -Encoding ASCII
-Write-Output "Built: $OutExe"
+$hash = (Get-FileHash $OutExe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+Set-Content -Path "$($OutExe.FullName).sha256" -Value "$hash  $($OutExe.Name)" -Encoding ASCII
+Write-Output "Built: $($OutExe.FullName)"
 Write-Output "SHA256: $hash"
