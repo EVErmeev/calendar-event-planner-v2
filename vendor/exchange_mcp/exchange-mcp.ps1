@@ -15,11 +15,11 @@ if (-not (Test-Path $RuntimePy)) {
     $RuntimePy = "python"
 }
 
-# Set PYTHONPATH so `exchange_mcp` package is importable.
+# Set PYTHONPATH so `server` package is importable.
 $ServerDir = Join-Path $ScriptDir "server"
 $env:PYTHONPATH = "$ServerDir$([IO.Path]::PathSeparator)$env:PYTHONPATH"
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 
-& $RuntimePy -m exchange_mcp.server
+& $RuntimePy "$ServerDir\server.py"
 exit $LASTEXITCODE

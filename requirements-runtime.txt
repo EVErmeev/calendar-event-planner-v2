@@ -12,3 +12,8 @@ tzdata>=2024.1
 requests>=2.31.0
 requests-ntlm>=1.2.0
 keyring>=25.0.0
+# Bundled Exchange MCP server runtime deps (vendor/exchange_mcp/server/server.py)
+# server.py targets the mcp 1.x SDK API (mcp.server.fastmcp); pin below 2.x.
+mcp>=1.8.0,<2
+exchangelib>=5.4.0
+python-dotenv>=1.0.0
