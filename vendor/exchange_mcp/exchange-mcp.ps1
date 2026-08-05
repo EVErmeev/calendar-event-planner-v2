@@ -5,9 +5,18 @@
 param()
 $ErrorActionPreference = "Stop"
 
-# Resolve install dir relative to this script: <install>\exchange-mcp\exchange-mcp.ps1
+# Resolve install dir: this script may live at <install>\vendor\exchange_mcp\
+# (portable/installer layout) or <install>\exchange-mcp\ (legacy layout).
+# Walk up from the script dir until we find a sibling "runtime" directory.
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$InstallDir = Split-Path -Parent $ScriptDir   # <install>\exchange-mcp -> <install>
+$InstallDir = $ScriptDir
+while ($InstallDir) {
+    if (Test-Path (Join-Path $InstallDir "runtime\python.exe")) { break }
+    $parent = Split-Path -Parent $InstallDir
+    if ($parent -eq $InstallDir) { $InstallDir = $null; break }
+    $InstallDir = $parent
+}
+if (-not $InstallDir) { $InstallDir = Split-Path -Parent $ScriptDir }
 
 # Prefer bundled runtime, fall back to system python.
 $RuntimePy = Join-Path $InstallDir "runtime\python.exe"
@@ -15,7 +24,7 @@ if (-not (Test-Path $RuntimePy)) {
     $RuntimePy = "python"
 }
 
-# Set PYTHONPATH so `server` package is importable.
+# Set PYTHONPATH so `server` module is importable.
 $ServerDir = Join-Path $ScriptDir "server"
 $env:PYTHONPATH = "$ServerDir$([IO.Path]::PathSeparator)$env:PYTHONPATH"
 $env:PYTHONUTF8 = "1"
