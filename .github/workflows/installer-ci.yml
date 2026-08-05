@@ -77,6 +77,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Build private runtime
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/build_runtime.ps1
       - name: Build portable + verify
         shell: powershell
         run: |
@@ -100,6 +103,9 @@ jobs:
       - name: Install Inno Setup
         shell: powershell
         run: choco install innosetup -y
+      - name: Build private runtime
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/build_runtime.ps1
       - name: Prepare staging
         shell: powershell
         run: |
@@ -124,6 +130,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Build private runtime
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/build_runtime.ps1
       - name: Build portable
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/build_portable.ps1 -Version 1.1.0
