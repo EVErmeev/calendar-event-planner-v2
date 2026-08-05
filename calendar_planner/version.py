@@ -7,7 +7,7 @@ version from here — never hardcode it in multiple places.
 
 from __future__ import annotations
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 APP_NAME = "Calendar Event Planner"
 PACKAGE_NAME = "calendar-event-planner-v2"
 CLI_LABEL = f"{PACKAGE_NAME} {__version__}"

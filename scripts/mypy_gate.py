@@ -29,6 +29,7 @@ def run_mypy(paths: list[Path]) -> list[str]:
         [sys.executable, "-m", "mypy", "--config-file", str(CONFIG), *[str(p) for p in paths]],
         capture_output=True,
         text=True,
+        check=False,
     )
     errors = [ln for ln in proc.stdout.splitlines() if "error:" in ln]
     return errors

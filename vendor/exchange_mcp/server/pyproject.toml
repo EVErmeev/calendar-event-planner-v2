@@ -1,0 +1,19 @@
+[project]
+name = "exchange-mcp-server"
+version = "0.1.0"
+description = "MCP server for MS Exchange (EWS) integration"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.2.0",
+    "exchangelib",
+    "python-dotenv",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[dependency-groups]
+dev = ["pytest>=8"]

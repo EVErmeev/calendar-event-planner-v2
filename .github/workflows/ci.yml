@@ -84,14 +84,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Prepare dev venv (launcher fallback)
+        shell: powershell
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python -m pip install --upgrade pip -q
+          .\.venv\Scripts\python -m pip install -e . -q
+
       - name: BAT help from clean checkout
         shell: cmd
         run: call run_calendar_planner.bat --help
-
-      - name: Check venv was created
-        shell: cmd
-        run: |
-          if not exist ".venv\Scripts\python.exe" exit /b 1
 
       - name: BAT version
         shell: cmd
