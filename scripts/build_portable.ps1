@@ -52,6 +52,17 @@ Copy-Item -Path (Join-Path $Root "calendar_planner") -Destination (Join-Path $St
 # vendored Exchange MCP (bundled component)
 Copy-Item -Path (Join-Path $Root "vendor\exchange_mcp") -Destination (Join-Path $Stage "vendor\exchange_mcp") -Recurse -Force
 
+# bundled private Python runtime (if built). Offline-first: installer must carry it.
+$RuntimeSrc = Join-Path $Root "build\runtime"
+if (Test-Path $RuntimeSrc) {
+    Write-Host "Including private runtime from $RuntimeSrc"
+    Copy-Item -Path $RuntimeSrc -Destination (Join-Path $Stage "runtime") -Recurse -Force
+    $pythonVersion = "bundled"
+} else {
+    Write-Host "WARN: build/runtime not found - portable will not be self-contained."
+    $pythonVersion = "system-required"
+}
+
 # scripts (user-relevant)
 New-Item -ItemType Directory -Path (Join-Path $Stage "scripts") -Force | Out-Null
 $scriptIncludes = @(
@@ -87,7 +98,7 @@ $manifest = @{
     "product"               = "Calendar Event Planner"
     "app_version"           = $Version
     "installer_version"     = $Version
-    "python_version"        = "bundled-or-system"
+    "python_version"        = $pythonVersion
     "exchange_mcp_version"  = "1.0.0-cep.1"
     "exchange_mcp_upstream_commit" = "0000000000000000000000000000000000000000"
     "exchange_mcp_local_patches"   = @("send_meeting_invitations")
@@ -107,4 +118,4 @@ Set-Content -Path "$ZipPath.sha256" -Value "$hash  $([System.IO.Path]::GetFileNa
 
 Write-Output "Built: $ZipPath"
 Write-Output "SHA256: $hash"
-Write-Output "SHA256 file: $ZipPath.sha256"
+Write-Output "SHA256 file: ${ZipPath}.sha256"

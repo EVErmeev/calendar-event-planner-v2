@@ -50,15 +50,22 @@ $serverText = Get-Content (Join-Path $ExtractDir "vendor\exchange_mcp\server\ser
 Check ($serverText -match "SEND_TO_ALL_AND_SAVE_COPY") "invitation fix applied"
 Check ($serverText -notmatch "SEND_AND_SAVE_COPY") "no legacy SEND_AND_SAVE_COPY"
 
+# 3b. private runtime (self-contained)
+Check (Test-Path (Join-Path $ExtractDir "runtime\python.exe")) "private runtime present"
+Check (Test-Path (Join-Path $ExtractDir "runtime\runtime-manifest.json")) "runtime manifest present"
+
 # 4. secrets / artifacts exclusion
 # credential_provider.py is a legitimate app module; exclude it from the scan
 # while still catching real secret/artifact files (credentials storage, tokens).
+# Skip library source dirs (site-packages) and docs, where "credentials.py"
+# modules and PRIVACY_AND_CREDENTIALS.md are legitimate.
 $bad = Get-ChildItem $ExtractDir -Recurse -Force -ErrorAction SilentlyContinue | Where-Object {
+    $_.FullName -notmatch '\\site-packages\\|\\docs\\' -and
     ($_.Name -eq '.env') -or
     ($_.Name -eq '.venv') -or
     ($_.FullName -match '\\logs\\|\\runs\\') -or
     ($_.Name -match '(__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.pyc)') -or
-    ($_.FullName -match 'credentials(\.|\\)|tokens(\.|\\)|\.env$')
+    ($_.FullName -match '\\credentials\.(json|txt|env)$|\\tokens\.(json|txt)$|\.env$')
 }
 Check (-not $bad) "no secrets/artifacts ($($bad.Count))"
 

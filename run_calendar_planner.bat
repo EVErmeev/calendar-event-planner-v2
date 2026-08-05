@@ -8,164 +8,72 @@ set "PYTHONIOENCODING=utf-8"
 set "APP_DIR=%~dp0"
 set "APP_DIR=%APP_DIR:~0,-1%"
 cd /d "%APP_DIR%" 2>nul
-if errorlevel 1 (
-    echo [ERROR] Cannot change to app directory: %APP_DIR%
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto :exit_cd
 
 if not exist "logs" mkdir logs 2>nul
-
 set "LOG_FILE=%APP_DIR%\logs\launcher.log"
-( echo %date% %time% Launcher started ) >> "%LOG_FILE%"
-( echo %date% %time% App dir: %APP_DIR% ) >> "%LOG_FILE%"
-
-set "VENV_PYTHON=%APP_DIR%\.venv\Scripts\python.exe"
 
 :: ============================================================
-:: Find working Python 3.11+
+:: Production launcher.
+:: Prefers the bundled private runtime (<install>\runtime\python.exe)
+:: with all deps installed at build time. NEVER uses py/python from
+:: PATH, never creates a .venv, never runs pip on first launch.
 :: ============================================================
-set "PYTHON_CMD="
 
-:: Try py -3.11
-py -3.11 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
-if not errorlevel 1 (
-    set "PYTHON_CMD=py -3.11"
-    goto :found_python
+set "PRIVATE_PYTHON=%APP_DIR%\runtime\python.exe"
+set "DEV_PYTHON=%APP_DIR%\.venv\Scripts\python.exe"
+set "RUNTIME_PYTHON="
+
+if exist "%PRIVATE_PYTHON%" (
+    set "RUNTIME_PYTHON=%PRIVATE_PYTHON%"
+    goto :check_deps
 )
 
-:: Try py
-py -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
-if not errorlevel 1 (
-    set "PYTHON_CMD=py"
-    goto :found_python
+:: Dev fallback: use an existing .venv if present. Never create it here.
+if exist "%DEV_PYTHON%" (
+    set "RUNTIME_PYTHON=%DEV_PYTHON%"
+    goto :check_deps
 )
 
-:: Try python
-python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
-if not errorlevel 1 (
-    set "PYTHON_CMD=python"
-    goto :found_python
-)
-
-echo [ERROR] Python 3.11 or newer not found.
-echo Install Python 3.11+: https://www.python.org/downloads/
-echo Enable "Add Python to PATH" during installation.
-( echo %date% %time% FATAL: Python not found ) >> "%LOG_FILE%"
+:: No private runtime and no dev venv -> broken/not-installed product.
+echo [ERROR] Bundled runtime not found: "%PRIVATE_PYTHON%"
+echo.
+echo This looks like an incomplete installation.
+echo Please re-run the CalendarEventPlannerSetup installer.
+echo.
+echo For developers: create .venv and run pip install -e . manually.
 pause
 exit /b 1
 
-:found_python
-( echo %date% %time% Python: %PYTHON_CMD% ) >> "%LOG_FILE%"
-
-:: ============================================================
-:: Setup venv if missing
-:: ============================================================
-if not exist "%VENV_PYTHON%" (
-    echo Creating virtual environment .venv ...
-    ( echo %date% %time% Creating .venv ) >> "%LOG_FILE%"
-    %PYTHON_CMD% -m venv .venv
-    if errorlevel 1 (
-        echo [ERROR] Failed to create virtual environment.
-        ( echo %date% %time% FATAL: venv creation failed ) >> "%LOG_FILE%"
-        pause
-        exit /b 1
-    )
-    ( echo %date% %time% Created .venv ) >> "%LOG_FILE%"
-
-    echo Installing application ...
-    "%VENV_PYTHON%" -m pip install --upgrade pip -q --disable-pip-version-check
-    if errorlevel 1 (
-        echo [ERROR] Failed to upgrade pip.
-        ( echo %date% %time% FATAL: pip upgrade failed ) >> "%LOG_FILE%"
-        pause
-        exit /b 1
-    )
-
-    "%VENV_PYTHON%" -m pip install -e . -q
-    if errorlevel 1 (
-        echo [ERROR] Failed to install application.
-        echo Check logs\launcher.log
-        ( echo %date% %time% FATAL: pip install failed ) >> "%LOG_FILE%"
-        pause
-        exit /b 1
-    )
-    ( echo %date% %time% Package installed ) >> "%LOG_FILE%"
-    echo Installation complete.
-) else (
-    :: Verify venv Python works
-    "%VENV_PYTHON%" -c "import sys; sys.exit(0)" >nul 2>&1
-    if errorlevel 1 (
-        echo Virtual environment damaged, recreating...
-        rmdir /s /q ".venv" 2>nul
-        %PYTHON_CMD% -m venv .venv
-        if errorlevel 1 (
-            echo [ERROR] Failed to recreate virtual environment.
-            pause
-            exit /b 1
-        )
-        "%VENV_PYTHON%" -m pip install -e . -q
-        if errorlevel 1 (
-            echo [ERROR] Failed to reinstall application.
-            pause
-            exit /b 1
-        )
-    )
-
-    :: Verify package installed
-    "%VENV_PYTHON%" -c "import calendar_planner" >nul 2>&1
-    if errorlevel 1 (
-        echo Updating package...
-        "%VENV_PYTHON%" -m pip install -e . -q
-        if errorlevel 1 goto :fatal
-    )
-)
-
-:: ============================================================
-:: Verify runtime dependencies (repair if missing)
-:: ============================================================
 :check_deps
-"%VENV_PYTHON%" -c "import calendar_planner, keyring, requests_ntlm" >nul 2>&1
-if not errorlevel 1 goto :run_app
+if "%RUNTIME_PYTHON%"=="" goto :exit_no_runtime
+"%RUNTIME_PYTHON%" -c "import calendar_planner, keyring, requests_ntlm" >nul 2>&1
+if errorlevel 1 goto :exit_no_deps
+goto :run_app
 
-echo Runtime dependencies missing — repairing...
-( echo %date% %time% Missing runtime deps; running pip install -e . ) >> "%LOG_FILE%"
-"%VENV_PYTHON%" -m pip install -e . -q
-if errorlevel 1 goto :dep_repair_failed
-
-"%VENV_PYTHON%" -c "import calendar_planner, keyring, requests_ntlm" >nul 2>&1
-if not errorlevel 1 goto :run_app
-
-:dep_repair_failed
-echo [ERROR] Runtime dependencies missing even after repair.
-echo Run: .\.venv\Scripts\python -m pip install -e .
-( echo %date% %time% FATAL: runtime deps missing after repair ) >> "%LOG_FILE%"
-pause
-exit /b 1
-
-:: ============================================================
-:: Run application
-:: ============================================================
 :run_app
-( echo %date% %time% Running: %VENV_PYTHON% -m calendar_planner.app.bootstrap %* ) >> "%LOG_FILE%"
-
-"%VENV_PYTHON%" -m calendar_planner.app.bootstrap %*
+"%RUNTIME_PYTHON%" -m calendar_planner.app.bootstrap %*
 set "EXIT_CODE=%errorlevel%"
-
-( echo %date% %time% Exit code: %EXIT_CODE% ) >> "%LOG_FILE%"
-
-if %EXIT_CODE% neq 0 (
+if not "%EXIT_CODE%"=="0" (
     echo.
     echo [ERROR] Program exited with code %EXIT_CODE%.
     echo Details: logs\launcher.log
     pause
 )
-
 exit /b %EXIT_CODE%
 
-:fatal
-echo [ERROR] Fatal error occurred.
-echo Details: logs\launcher.log
-( echo %date% %time% FATAL: unrecoverable error ) >> "%LOG_FILE%"
+:exit_no_runtime
+echo [ERROR] No Python runtime selected.
+pause
+exit /b 1
+
+:exit_no_deps
+echo [ERROR] Runtime dependencies missing. Run Diagnostics or reinstall.
+echo For developers: %RUNTIME_PYTHON% -m pip install -e . -q
+pause
+exit /b 1
+
+:exit_cd
+echo [ERROR] Cannot change to app directory: %APP_DIR%
 pause
 exit /b 1

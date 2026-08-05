@@ -1,0 +1,14 @@
+# Runtime-only dependencies for the packaged product.
+# Installed into the private Python runtime at build time (offline for the user).
+# NOT dev/test tools. Keyring is mandatory (Credential Manager persistence).
+openpyxl>=3.1.0
+python-docx>=1.1.0
+PyPDF2>=3.0.0
+beautifulsoup4>=4.12.0
+python-dateutil>=2.8.0
+fuzzywuzzy>=0.18.0
+python-Levenshtein>=0.25.0
+tzdata>=2024.1
+requests>=2.31.0
+requests-ntlm>=1.2.0
+keyring>=25.0.0
